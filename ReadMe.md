@@ -3,4 +3,4 @@
 
 It is a prototype of a game called **Hiding in the Dark** written in Python
 
-See [Storyline](storyline.md) to read a bit of the story of the game. 
+See [storyline](storyline.md) to read a bit of the story of the game. 
