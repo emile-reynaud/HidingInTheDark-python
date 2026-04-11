@@ -29,7 +29,7 @@ class Enemy(pygame.sprite.Sprite):
         super().__init__()
 
         self.image = pygame.transform.scale(
-            pygame.image.load("assets/textures/enemy/enemy.png").convert_alpha(),
+            pygame.image.load("assets/textures/enemy/wizard.png").convert_alpha(),
             (PLAYER_SIZE, PLAYER_SIZE),
         )
         self.rect = self.image.get_rect(topleft=(x, y))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from curses.panel import panel
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import pygame
@@ -14,36 +15,30 @@ class InventoryItem:
     item_id: str
     name: str
     quantity: int = 1
-    icon: Optional[pygame.Surface] = None
+    icon_path: Optional[str] = None
     description: str = ""
     category: str = "Misc"
-    meta: Dict = field(default_factory=dict)
+    rarity: str = "common"
+    value: int = 0
+    stackable: bool = True
 
     def add(self, amount: int = 1) -> None:
         self.quantity = max(0, self.quantity + amount)
 
 
 class InventoryUI:
-    def __init__(
-        self,
-        screen_width: int,
-        screen_height: int,
-        ui_scale: float = 1.0,
-        font_path: Optional[str] = None,
-    ):
+    def __init__(self, screen_width: int, screen_height: int, scale: float = 1.0, font_path: Optional[str] = None):
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.ui_scale = max(0.5, ui_scale)
+        self.scale = max(0.5, scale)
         self.font_path = font_path
         self.open = False
 
         self.items: Dict[str, InventoryItem] = {}
         self.display_order: List[str] = []
+        self.image_cache: Dict[str, Optional[pygame.Surface]] = {}
 
-        self.scroll_offset = 0
-        self.scroll_speed = 1
-        self.hovered_item_id: Optional[str] = None
-        self._slot_rects: List[Tuple[pygame.Rect, str]] = []
+        self._apply_scale_metrics()
 
         self.bg_color = (14, 12, 10)
         self.panel_color = (28, 24, 20)
@@ -56,37 +51,22 @@ class InventoryUI:
         self.accent_color = (196, 166, 104)
         self.tooltip_bg = (8, 8, 8)
 
-        self._apply_scale_metrics()
+        self.hovered_item_id: Optional[str] = None
+        self._slot_rects: List[Tuple[pygame.Rect, str]] = []
+
         self._build_fonts()
         self._rebuild_layout()
-
+    
+    def _scaled(self, value: int, minimum: Optional[int] = None) -> int:
+        scaled = int(round(value * self.scale))
+        if minimum is not None:
+            scaled = max(minimum, scaled)
+        return scaled
+    
     def _font(self, size: int, bold: bool = False) -> pygame.font.Font:
         if self.font_path:
             return pygame.font.Font(self.font_path, size)
         return pygame.font.SysFont("arial", size, bold=bold)
-
-    def _scaled(self, value: int, minimum: Optional[int] = None) -> int:
-        scaled = int(round(value * self.ui_scale))
-        if minimum is not None:
-            return max(minimum, scaled)
-        return scaled
-
-    def _apply_scale_metrics(self) -> None:
-        self.scroll_speed = max(1, int(round(self.ui_scale)))
-        self.slot_size = self._scaled(72, 44)
-        self.slot_gap = self._scaled(12, 8)
-        self.padding = self._scaled(24, 14)
-        self.header_height = self._scaled(108, 72)
-        self.corner_radius = self._scaled(14, 8)
-        self.border_width = self._scaled(3, 2)
-        self.scrollbar_gap = self._scaled(10, 6)
-        self.scrollbar_width = self._scaled(10, 6)
-        self.icon_inset = self._scaled(18, 10)
-        self.qty_pad_x = self._scaled(12, 8)
-        self.qty_pad_y = self._scaled(8, 6)
-        self.tooltip_pad = self._scaled(12, 8)
-        self.tooltip_offset = self._scaled(18, 12)
-        self.first_row_offset = self._scaled(10, 6)
 
     def _build_fonts(self) -> None:
         pygame.font.init()
@@ -95,7 +75,45 @@ class InventoryUI:
         self.small_font = self._font(self._scaled(16, 12))
         self.qty_font = self._font(self._scaled(18, 13), bold=True)
 
-    def set_ui_scale(self, ui_scale: float, font_path: Optional[str] = None) -> None:
+    def _apply_scale_metrics(self) -> None:
+        self.scroll_speed = max(1, int(round(self.scale)))
+        self.slot_size = self._scaled(72, 44)
+        self.slot_gap = self._scaled(12, 8)
+        self.padding = self._scaled(24, 14)
+        self.header_height = self._scaled(108, 72)
+        self.footer_height = 0
+        self.corner_radius = self._scaled(14, 8)
+        self.border_width = self._scaled(3, 2)
+        self.icon_inset = self._scaled(18, 10)
+        self.first_row_offset = self._scaled(10, 6)
+
+    def _rebuild_layout(self) -> None:
+        horizontal_margin = self._scaled(120, 60)
+        vertical_margin = self._scaled(120, 60)
+
+        panel_width = min(
+            self._scaled(980, 560),
+            max(self._scaled(640, 420), self.screen_width - horizontal_margin)
+        )
+        panel_height = min(
+            self._scaled(720, 380),
+            max(self._scaled(420, 260), self.screen_height - vertical_margin)
+        )
+
+        x = (self.screen_width - panel_width) // 2
+        y = (self.screen_height - panel_height) // 2
+        self.panel_rect = pygame.Rect(x, y, panel_width, panel_height)
+
+        usable_width = panel_width - self.padding * 2
+        self.columns = max(5, usable_width // (self.slot_size + self.slot_gap))
+        self.grid_rect = pygame.Rect(
+            self.panel_rect.x + self.padding,
+            self.panel_rect.y + self.header_height,
+            usable_width,
+            panel_height - self.header_height - self.first_row_offset,
+        )
+    
+    def set_ui_scale(self, ui_scale: float, font_path: str | None = None) -> None:
         self.ui_scale = max(0.5, ui_scale)
         if font_path is not None:
             self.font_path = font_path
@@ -103,7 +121,7 @@ class InventoryUI:
         self._build_fonts()
         self._rebuild_layout()
 
-    def set_screen_size(self, width: int, height: int, ui_scale: Optional[float] = None) -> None:
+    def set_screen_size(self, width: int, height: int, ui_scale: float | None = None) -> None:
         self.screen_width = width
         self.screen_height = height
         if ui_scale is not None:
@@ -111,27 +129,6 @@ class InventoryUI:
             self._apply_scale_metrics()
             self._build_fonts()
         self._rebuild_layout()
-
-    def _rebuild_layout(self) -> None:
-        horizontal_margin = self._scaled(120, 60)
-        vertical_margin = self._scaled(120, 60)
-        panel_width = min(self._scaled(980, 560), max(self._scaled(640, 420), self.screen_width - horizontal_margin))
-        panel_height = min(self._scaled(720, 380), max(self._scaled(420, 260), self.screen_height - vertical_margin))
-        x = (self.screen_width - panel_width) // 2
-        y = (self.screen_height - panel_height) // 2
-        self.panel_rect = pygame.Rect(x, y, panel_width, panel_height)
-
-        usable_width = panel_width - self.padding * 2 - self.scrollbar_width - self.scrollbar_gap
-        self.columns = max(4, usable_width // (self.slot_size + self.slot_gap))
-
-        grid_top = self.panel_rect.y + self.header_height + self.first_row_offset
-        grid_height = panel_height - (grid_top - self.panel_rect.y) - self.padding
-        self.grid_rect = pygame.Rect(
-            self.panel_rect.x + self.padding,
-            grid_top,
-            usable_width,
-            max(self.slot_size, grid_height),
-        )
 
     def toggle(self) -> None:
         self.open = not self.open
@@ -151,43 +148,57 @@ class InventoryUI:
     def total_item_count(self) -> int:
         return sum(item.quantity for item in self.items.values())
 
-    def add_item(
-        self,
-        name: str,
-        quantity: int = 1,
-        item_id: Optional[str] = None,
-        icon: Optional[pygame.Surface] = None,
-        description: str = "",
-        category: str = "Misc",
-        meta: Optional[Dict] = None,
-    ) -> InventoryItem:
-        normalized_id = (item_id or name.strip().lower()).strip().lower()
-        safe_quantity = max(0, int(quantity))
+    def _normalize_item_dict(self, item: dict) -> dict:
+        base_id = str(item.get("item_id") or item.get("id") or item.get("name") or "item").strip().lower()
+        return {
+            "item_id": base_id,
+            "name": str(item.get("name", base_id.title())),
+            "quantity": max(1, int(item.get("quantity", 1))),
+            "icon_path": item.get("icon_path"),
+            "description": str(item.get("description", "")),
+            "category": str(item.get("category", "Misc")),
+            "rarity": str(item.get("rarity", "common")),
+            "value": int(item.get("value", 0)),
+            "stackable": bool(item.get("stackable", True)),
+        }
 
-        if normalized_id in self.items:
-            self.items[normalized_id].add(safe_quantity)
-            if icon is not None:
-                self.items[normalized_id].icon = icon
-            if description:
-                self.items[normalized_id].description = description
-            if category:
-                self.items[normalized_id].category = category
-            if meta is not None:
-                self.items[normalized_id].meta = meta
-            return self.items[normalized_id]
+    def _next_nonstackable_id(self, base_id: str) -> str:
+        if base_id not in self.items:
+            return base_id
+        index = 1
+        while f"{base_id}#{index}" in self.items:
+            index += 1
+        return f"{base_id}#{index}"
 
-        item = InventoryItem(
-            item_id=normalized_id,
-            name=name,
-            quantity=safe_quantity,
-            icon=icon,
-            description=description,
-            category=category,
-            meta=meta or {},
+    def add_item(self, item: dict) -> InventoryItem:
+        data = self._normalize_item_dict(item)
+        base_id = data["item_id"]
+
+        if data["stackable"]:
+            if base_id in self.items:
+                self.items[base_id].add(data["quantity"])
+                return self.items[base_id]
+            final_id = base_id
+        else:
+            if "#" in base_id and base_id not in self.items:
+                final_id = base_id
+            else:
+                final_id = self._next_nonstackable_id(base_id)
+
+        entry = InventoryItem(
+            item_id=final_id,
+            name=data["name"],
+            quantity=data["quantity"],
+            icon_path=data["icon_path"],
+            description=data["description"],
+            category=data["category"],
+            rarity=data["rarity"],
+            value=data["value"],
+            stackable=data["stackable"],
         )
-        self.items[normalized_id] = item
-        self.display_order.append(normalized_id)
-        return item
+        self.items[final_id] = entry
+        self.display_order.append(final_id)
+        return entry
 
     def remove_item(self, item_id: str, quantity: int = 1) -> bool:
         normalized_id = item_id.strip().lower()
@@ -202,11 +213,24 @@ class InventoryUI:
         self._clamp_scroll()
         return True
 
-    def get_item(self, item_id: str) -> Optional[InventoryItem]:
-        return self.items.get(item_id.strip().lower())
-
     def sorted_items(self) -> List[InventoryItem]:
         return [self.items[iid] for iid in self.display_order if iid in self.items and self.items[iid].quantity > 0]
+
+    def serialize_items(self) -> List[dict]:
+        return [
+            {
+                "item_id": item.item_id,
+                "name": item.name,
+                "quantity": item.quantity,
+                "icon_path": item.icon_path,
+                "description": item.description,
+                "category": item.category,
+                "rarity": item.rarity,
+                "value": item.value,
+                "stackable": item.stackable,
+            }
+            for item in self.sorted_items()
+        ]
 
     def _visible_rows(self) -> int:
         return max(1, self.grid_rect.height // (self.slot_size + self.slot_gap))
@@ -262,6 +286,18 @@ class InventoryUI:
 
         return self.panel_rect.collidepoint(getattr(event, "pos", (-1, -1)))
 
+    def _get_icon(self, icon_path: Optional[str]) -> Optional[pygame.Surface]:
+        if not icon_path:
+            return None
+        if icon_path in self.image_cache:
+            return self.image_cache[icon_path]
+        try:
+            image = pygame.image.load(icon_path).convert_alpha()
+        except Exception:
+            image = None
+        self.image_cache[icon_path] = image
+        return image
+
     def draw(self, surface: pygame.Surface) -> None:
         if not self.open:
             return
@@ -304,7 +340,6 @@ class InventoryUI:
 
     def _draw_grid(self, surface: pygame.Surface) -> None:
         items = self.sorted_items()
-
         if not items:
             empty = self.body_font.render("Nothing picked up yet.", True, self.text_color)
             tip = self.small_font.render("Collected items will appear here automatically.", True, self.subtext_color)
@@ -317,53 +352,51 @@ class InventoryUI:
         start_index = self.scroll_offset * self.columns
         visible_count = self._visible_rows() * self.columns
         visible_items = items[start_index:start_index + visible_count]
-
         mouse_pos = pygame.mouse.get_pos()
 
         for index, item in enumerate(visible_items):
             row = index // self.columns
             col = index % self.columns
-            slot_x = self.grid_rect.x + col * (self.slot_size + self.slot_gap)
-            slot_y = self.grid_rect.y + row * (self.slot_size + self.slot_gap)
-            slot_rect = pygame.Rect(slot_x, slot_y, self.slot_size, self.slot_size)
+            slot_rect = pygame.Rect(
+                self.grid_rect.x + col * (self.slot_size + self.slot_gap),
+                self.grid_rect.y + row * (self.slot_size + self.slot_gap),
+                self.slot_size,
+                self.slot_size,
+            )
             self._slot_rects.append((slot_rect, item.item_id))
-
             hovered = slot_rect.collidepoint(mouse_pos)
             if hovered:
                 self.hovered_item_id = item.item_id
-
             self._draw_slot(surface, slot_rect, item, hovered)
 
         self._draw_scrollbar(surface)
 
     def _draw_slot(self, surface: pygame.Surface, rect: pygame.Rect, item: InventoryItem, hovered: bool) -> None:
         fill = self.slot_hover_color if hovered else self.slot_color
-        pygame.draw.rect(surface, fill, rect, border_radius=self._scaled(10, 6))
-        pygame.draw.rect(surface, self.slot_border, rect, width=max(1, self._scaled(2, 1)), border_radius=self._scaled(10, 6))
-
+        slot_radius = self._scaled(10, 6)
+        slot_border = max(1, self._scaled(2, 1))
+        pygame.draw.rect(surface, fill, rect, border_radius=slot_radius)
+        pygame.draw.rect(surface, self.slot_border, rect, width=slot_border, border_radius=slot_radius)
+        
         icon_rect = rect.inflate(-self.icon_inset, -self.icon_inset)
-        if item.icon is not None:
-            source = item.icon
-            src_w, src_h = source.get_size()
-            if src_w > 0 and src_h > 0:
-                scale_ratio = min(icon_rect.width / src_w, icon_rect.height / src_h)
-                target_w = max(1, int(round(src_w * scale_ratio)))
-                target_h = max(1, int(round(src_h * scale_ratio)))
-                # Use nearest-neighbor scaling to keep pixel art crisp.
-                icon = pygame.transform.scale(source, (target_w, target_h))
-                surface.blit(icon, icon.get_rect(center=rect.center))
+        icon = self._get_icon(item.icon_path)
+        if icon is not None:
+            src_w, src_h = icon.get_size()
+            scale_ratio = min(icon_rect.width / src_w, icon_rect.height / src_h)
+            target_w = max(1, int(round(src_w * scale_ratio)))
+            target_h = max(1, int(round(src_h * scale_ratio)))
+            scaled = pygame.transform.scale(icon, (target_w, target_h))
+            surface.blit(scaled, scaled.get_rect(center=rect.center))
         else:
-            pygame.draw.rect(surface, (88, 76, 62), icon_rect, border_radius=self._scaled(8, 5))
-            letter = self.body_font.render(item.name[:1].upper(), True, self.text_color)
-            surface.blit(letter, letter.get_rect(center=rect.center))
+            fallback = self.body_font.render(item.name[:1].upper(), True, self.text_color)
+            surface.blit(fallback, fallback.get_rect(center=rect.center))
 
         if item.quantity > 1:
-            qty = self.qty_font.render(str(item.quantity), True, (255, 255, 255))
-            qty_bg = qty.get_rect(bottomright=(rect.right - self._scaled(7, 4), rect.bottom - self._scaled(5, 3))).inflate(self.qty_pad_x, self.qty_pad_y)
-            qty_surface = pygame.Surface(qty_bg.size, pygame.SRCALPHA)
-            pygame.draw.rect(qty_surface, (0, 0, 0, 170), qty_surface.get_rect(), border_radius=self._scaled(8, 5))
-            surface.blit(qty_surface, qty_bg.topleft)
-            surface.blit(qty, qty.get_rect(center=qty_bg.center))
+            qty_text = self.qty_font.render(str(item.quantity), True, (255, 255, 255))
+            qty_bg = qty_text.get_rect(bottomright=(rect.right - 8, rect.bottom - 6)).inflate(14, 8)
+            pygame.draw.rect(surface, (15, 15, 15), qty_bg, border_radius=8)
+            pygame.draw.rect(surface, self.slot_border, qty_bg, width=1, border_radius=8)
+            surface.blit(qty_text, qty_text.get_rect(center=qty_bg.center))
 
     def _draw_scrollbar(self, surface: pygame.Surface) -> None:
         total_rows = self._total_rows()
@@ -371,60 +404,42 @@ class InventoryUI:
         if total_rows <= visible_rows:
             return
 
-        track_rect = pygame.Rect(
-            self.grid_rect.right + self.scrollbar_gap,
-            self.grid_rect.y,
-            self.scrollbar_width,
-            self.grid_rect.height,
-        )
-        pygame.draw.rect(surface, (54, 48, 42), track_rect, border_radius=self._scaled(6, 4))
+        track_rect = pygame.Rect(self.grid_rect.right + 8, self.grid_rect.y, 8, self.grid_rect.height)
+        pygame.draw.rect(surface, (34, 34, 34), track_rect, border_radius=8)
 
-        thumb_height = max(self._scaled(36, 22), int(track_rect.height * (visible_rows / total_rows)))
+        handle_height = max(36, int(track_rect.height * (visible_rows / total_rows)))
         max_scroll = max(1, total_rows - visible_rows)
-        travel = track_rect.height - thumb_height
-        thumb_y = track_rect.y + int((self.scroll_offset / max_scroll) * travel)
-        thumb_rect = pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height)
-        pygame.draw.rect(surface, self.accent_color, thumb_rect, border_radius=self._scaled(6, 4))
+        handle_y = track_rect.y + int((track_rect.height - handle_height) * (self.scroll_offset / max_scroll))
+        handle_rect = pygame.Rect(track_rect.x, handle_y, track_rect.width, handle_height)
+        pygame.draw.rect(surface, self.accent_color, handle_rect, border_radius=8)
 
     def _draw_tooltip(self, surface: pygame.Surface) -> None:
         if not self.hovered_item_id or self.hovered_item_id not in self.items:
             return
 
         item = self.items[self.hovered_item_id]
-        if item.quantity <= 0:
-            return
+        lines = [
+            self.body_font.render(item.name, True, self.text_color),
+            self.small_font.render(f"Category: {item.category}", True, self.subtext_color),
+            self.small_font.render(f"Rarity: {item.rarity}", True, self.subtext_color),
+            self.small_font.render(f"Value: {item.value}", True, self.subtext_color),
+        ]
+        if item.description:
+            lines.append(self.small_font.render(item.description, True, self.subtext_color))
 
-        name_surf = self.body_font.render(item.name, True, self.text_color)
-        qty_surf = self.small_font.render(f"Quantity: {item.quantity}", True, self.accent_color)
-        cat_surf = self.small_font.render(f"Category: {item.category}", True, self.subtext_color)
-        desc_text = item.description or "Collected item"
-        desc_surf = self.small_font.render(desc_text, True, self.subtext_color)
+        width = max(line.get_width() for line in lines) + 24
+        height = sum(line.get_height() for line in lines) + 20 + (len(lines) - 1) * 4
+        mx, my = pygame.mouse.get_pos()
+        tooltip_rect = pygame.Rect(mx + 18, my + 18, width, height)
+        if tooltip_rect.right > self.screen_width - 8:
+            tooltip_rect.right = self.screen_width - 8
+        if tooltip_rect.bottom > self.screen_height - 8:
+            tooltip_rect.bottom = self.screen_height - 8
 
-        width = max(name_surf.get_width(), qty_surf.get_width(), cat_surf.get_width(), desc_surf.get_width()) + self.tooltip_pad * 2
-        height = (
-            name_surf.get_height()
-            + qty_surf.get_height()
-            + cat_surf.get_height()
-            + desc_surf.get_height()
-            + self.tooltip_pad * 2
-            + self._scaled(10, 6)
-        )
+        pygame.draw.rect(surface, (*self.tooltip_bg, 230), tooltip_rect, border_radius=10)
+        pygame.draw.rect(surface, self.slot_border, tooltip_rect, width=1, border_radius=10)
 
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        x = min(mouse_x + self.tooltip_offset, self.screen_width - width - self._scaled(10, 6))
-        y = min(mouse_y + self.tooltip_offset, self.screen_height - height - self._scaled(10, 6))
-        tooltip_rect = pygame.Rect(x, y, width, height)
-
-        tip_surface = pygame.Surface(tooltip_rect.size, pygame.SRCALPHA)
-        pygame.draw.rect(tip_surface, (*self.tooltip_bg, 235), tip_surface.get_rect(), border_radius=self._scaled(10, 6))
-        pygame.draw.rect(tip_surface, self.panel_border, tip_surface.get_rect(), width=max(1, self._scaled(2, 1)), border_radius=self._scaled(10, 6))
-        surface.blit(tip_surface, tooltip_rect.topleft)
-
-        line_y = y + self.tooltip_pad
-        surface.blit(name_surf, (x + self.tooltip_pad, line_y))
-        line_y += name_surf.get_height() + self._scaled(4, 2)
-        surface.blit(qty_surf, (x + self.tooltip_pad, line_y))
-        line_y += qty_surf.get_height() + self._scaled(2, 2)
-        surface.blit(cat_surf, (x + self.tooltip_pad, line_y))
-        line_y += cat_surf.get_height() + self._scaled(4, 2)
-        surface.blit(desc_surf, (x + self.tooltip_pad, line_y))
+        y = tooltip_rect.y + 10
+        for line in lines:
+            surface.blit(line, (tooltip_rect.x + 12, y))
+            y += line.get_height() + 4

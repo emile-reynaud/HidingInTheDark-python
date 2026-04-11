@@ -9,15 +9,17 @@ import pygame
 import pyautogui
 
 from Enemy import Enemy, generate_enemy_grid
+from ItemPickup import ItemPickup
+from Inventory import InventoryUI
 from background import create_background
 from Camera import Camera
 from Coin import Coin, generate_coin_grid
 from config import FPS, PLAYER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_SIZE
 from Lighting import LightingSystem
 from Player import Player
+from items import items
 from walls import draw_walls, generate_wall_grid
 from Button import Button
-from Inventory import InventoryUI
 
 
 SAVE_DIR = "saves"
@@ -78,6 +80,8 @@ class GameApp:
         self.enemy_grid = None
         self.tile_grid = None
         self.coins = pygame.sprite.Group()
+        self.items = pygame.sprite.Group()
+        self.inventory = InventoryUI(self.window_width, self.window_height, self.scale, font_path="assets/fonts/Kenney Mini.ttf")
         self.player = None
         self.camera = None
         self.lighting_system = None
@@ -87,34 +91,11 @@ class GameApp:
         self.save_buttons = []
         self.options_buttons = []
 
-        self.inventory = InventoryUI(
-            self.window_width,
-            self.window_height,
-            ui_scale=self.scale,
-            font_path="assets/fonts/Kenney Mini.ttf",
-        )
-
         os.makedirs(SAVE_DIR, exist_ok=True)
         self.create_menu_buttons()
         self.create_save_buttons()
         self.create_options_buttons()
         self.build_preview_world(seed=9999)
-
-    def get_inventory_icon(self, item_id, meta=None):
-        normalized_id = (item_id or '').strip().lower()
-        meta = meta or {}
-
-        icon_path = meta.get("icon_path")
-        if not icon_path and normalized_id == "coin":
-            icon_path = "assets/textures/coin/coin.png"
-
-        if not icon_path:
-            return None
-
-        try:
-            return pygame.image.load(icon_path).convert_alpha()
-        except Exception:
-            return None
 
     def save_path(self, slot):
         return os.path.join(SAVE_DIR, f"slot_{slot}.json")
@@ -139,21 +120,30 @@ class GameApp:
         coin_positions = []
         for coin in self.coins:
             coin_positions.append([coin.col, coin.row])
-        
+
         enemy_positions = []
         for enemy in self.enemies:
             enemy_positions.append([enemy.rect.centerx, enemy.rect.centery])
 
-        inventory_items = []
-        for item in self.inventory.sorted_items():
-            inventory_items.append({
-                "item_id": item.item_id,
-                "name": item.name,
-                "quantity": item.quantity,
-                "description": item.description,
-                "category": item.category,
-                "meta": item.meta,
+        remaining_items = []
+        for pickup in self.items:
+            remaining_items.append({
+                "col": pickup.col,
+                "row": pickup.row,
+                "item_data": dict(pickup.item_data),
             })
+
+        inventory_items = []
+        for item_id in self.inventory.display_order:
+            if '#' in item_id:
+                base_id = item_id.split('#')[0]
+            else:
+                base_id = item_id
+
+            inventory_items.append({ "item_id": item_id,
+                                     "item_base_id": base_id,
+                                     "quantity": self.inventory.items[item_id].quantity,
+                                     "stackable": self.inventory.items[item_id].stackable,})
 
         data = {
             "slot": slot,
@@ -161,7 +151,8 @@ class GameApp:
             "player_x": self.player.rect.centerx,
             "player_y": self.player.rect.centery,
             "coin_count": self.player.coin_count,
-            "inventory_items": inventory_items,
+            "inventory_items": self.inventory.serialize_items(),
+            "remaining_items": remaining_items,
             "remaining_coins": coin_positions,
             "enemy_positions": enemy_positions,
             "experience": self.player.experience,
@@ -176,6 +167,7 @@ class GameApp:
             "invulnerability_timer": self.player.invulnerability_timer,
             "level_up_experience": self.player.experience_to_next_level,
             "tile_grid": self.tile_grid,
+            "inventory_items": inventory_items,
         }
         with open(self.save_path(slot), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -264,7 +256,7 @@ class GameApp:
         self.options_buttons[1].set_info("Visible" if self.show_fps else "Hidden")
         self.options_buttons[2].set_info("Return to main menu")
 
-    def build_preview_world(self, seed):
+    def build_preview_world(self, seed, add_start_knife=True):
         self.current_seed = seed
         random.seed(seed)
         self.background, self.world_width, self.world_height = create_background()
@@ -273,9 +265,14 @@ class GameApp:
         draw_walls(self.background, self.wall_grid)
         self.coin_grid = generate_coin_grid(self.world_width, self.world_height, self.wall_grid)
         self.coins = self.build_coins_from_grid(self.coin_grid)
+        self.items = pygame.sprite.Group()
         self.enemy_grid = generate_enemy_grid(self.wall_grid, enemy_count=40)
         self.enemies = self.build_enemies_from_grid(self.enemy_grid)
         self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height)
+        if add_start_knife:
+            player_col = self.player.rect.centerx // TILE_SIZE
+            player_row = self.player.rect.centery // TILE_SIZE
+            self.items.add(ItemPickup(player_col + 1, player_row, dict(items["knife"])))
         self.tile_grid = self.create_tile_grid(self.world_width, self.world_height, TILE_SIZE, self.wall_grid, self.coin_grid, self.enemy_grid, (self.player.rect.centerx, self.player.rect.centery))
         self.camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.preview_camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
@@ -283,39 +280,53 @@ class GameApp:
         self.temp_surface = pygame.Surface((self.window_width, self.window_height)).convert()
 
     def build_world_for_slot(self, slot_data=None, slot=None):
+        self.inventory.clear()
+        self.inventory.close()
+
         if slot_data is None:
             seed = random.randint(1000, 999999)
-            self.build_preview_world(seed)
+            self.build_preview_world(seed, add_start_knife=True)
             self.selected_slot = slot
-            self.inventory.clear()
-            self.inventory.close()
             self.player.coin_count = 0
             self.message = f"Started new game in slot {slot}"
             return
 
         seed = slot_data.get("seed", random.randint(1000, 999999))
-        self.build_preview_world(seed)
+        self.build_preview_world(seed, add_start_knife=False)
         self.selected_slot = slot
         self.player.rect.center = (
             slot_data.get("player_x", self.world_width // 2),
             slot_data.get("player_y", self.world_height // 2),
         )
         self.player.coin_count = slot_data.get("coin_count", 0)
-        self.inventory.clear()
-        self.inventory.close()
+
+        remaining_items = slot_data.get("remaining_items")
+        if isinstance(remaining_items, list):
+            self.items = pygame.sprite.Group()
+            for saved in remaining_items:
+                item_data = dict(saved.get("item_data", {}))
+                col = saved.get("col")
+                row = saved.get("row")
+                if item_data and col is not None and row is not None:
+                    self.items.add(ItemPickup(col, row, item_data))
+
+        inventory_items = slot_data.get("inventory_items", [])
+        if isinstance(inventory_items, list):
+            for item_data in inventory_items:
+                self.inventory.add_item(items[item_data["item_base_id"]], quantity=item_data["quantity"])
 
         remaining = slot_data.get("remaining_coins")
         if isinstance(remaining, list):
             self.coins = pygame.sprite.Group()
             for col, row in remaining:
                 self.coins.add(Coin(col, row))
-        
+
         enemy_positions = slot_data.get("enemy_positions")
         if isinstance(enemy_positions, list):
             self.enemies = pygame.sprite.Group()
             for x, y in enemy_positions:
                 self.enemies.add(Enemy(x, y, self.world_width, self.world_height))
-        
+
         self.player.experience = slot_data.get("experience", 0)
         self.player.level = slot_data.get("level", 1)
         self.player.health = slot_data.get("health", self.player.max_health)
@@ -326,37 +337,7 @@ class GameApp:
         self.player.invulnerable = slot_data.get("invulnerable", False)
         self.player.invulnerability_timer = slot_data.get("invulnerability_timer", 0)
         self.player.experience_to_next_level = slot_data.get("level_up_experience", self.player.experience_to_next_level)
-
-        inventory_items = slot_data.get("inventory_items", [])
-        if isinstance(inventory_items, list):
-            for item_data in inventory_items:
-                quantity = int(item_data.get("quantity", 0))
-                if quantity <= 0:
-                    continue
-                item_id = item_data.get("item_id")
-                item_meta = item_data.get("meta", {})
-                self.inventory.add_item(
-                    item_data.get("name", "Item"),
-                    quantity=quantity,
-                    item_id=item_id,
-                    icon=self.get_inventory_icon(item_id, item_meta),
-                    description=item_data.get("description", ""),
-                    category=item_data.get("category", "Misc"),
-                    meta=item_meta,
-                )
-        elif self.player.coin_count > 0:
-            self.inventory.add_item(
-                "Coin",
-                quantity=self.player.coin_count,
-                item_id="coin",
-                icon=self.get_inventory_icon("coin", {"icon_path": "assets/textures/coin/coin.png"}),
-                description="A shiny gold coin.",
-                category="Currency",
-                meta={"icon_path": "assets/textures/coin/coin.png"},
-            )
-
         self.tile_grid = slot_data.get("tile_grid", self.tile_grid)
-
         self.message = f"Loaded slot {slot}"
 
     def build_coins_from_grid(self, coin_grid):
@@ -403,7 +384,6 @@ class GameApp:
             self.message = f"Saved slot {self.selected_slot}"
 
     def quit_to_menu(self):
-        self.inventory.close()
         self.save_current_game()
         preview_seed = 9999 if self.selected_slot is None else self.current_seed
         self.build_preview_world(preview_seed)
@@ -434,7 +414,7 @@ class GameApp:
                 (self.window_width, self.window_height),
                 pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
             )
-        
+
         self.update_ui_scale()
         self.camera.set_viewport_size(self.window_width, self.window_height)
         self.preview_camera.set_viewport_size(self.window_width, self.window_height)
@@ -537,17 +517,11 @@ class GameApp:
 
         for coin in pygame.sprite.spritecollide(self.player, self.coins, dokill=True):
             self.player.coin_count += 1
-            self.inventory.add_item(
-                "Coin",
-                quantity=1,
-                item_id="coin",
-                icon=coin.image,
-                description="A shiny gold coin.",
-                category="Currency",
-                meta={"icon_path": "assets/textures/coin/coin.png"},
-            )
 
-        for enemy in self.enemies:
+        for pickup in pygame.sprite.spritecollide(self.player, self.items, dokill=True):
+            self.inventory.add_item(dict(pickup.item_data))
+
+        for enemy in list(self.enemies):
             enemy.update(self.player.rect.center, self.wall_grid)
             if enemy._collision_rect().colliderect(self.player._collision_rect()):
                 self.player.hurt(enemy.attack)
@@ -561,7 +535,15 @@ class GameApp:
                     self.player.experience += enemy.experience
                     if self.player.experience >= self.player.experience_to_next_level:
                         self.player.level_up()
-        
+
+                    drop_col = enemy.rect.centerx // TILE_SIZE
+                    drop_row = enemy.rect.centery // TILE_SIZE
+                    roll = random.random()
+                    if roll < 0.30:
+                        self.items.add(ItemPickup(drop_col, drop_row, dict(items["health_potion"])))
+                    elif roll < 0.50:
+                        self.coins.add(Coin(drop_col, drop_row))
+
         self.update_tile_grid(self.tile_grid, self.coin_grid, self.enemy_grid, (self.player.rect.centerx, self.player.rect.centery))
 
     def render_world(self, active_camera):
@@ -645,7 +627,23 @@ class GameApp:
                     alpha = 0
                 if alpha > 0:
                     coin.draw(self.screen, self.camera, alpha)
-            
+
+        for pickup in self.items:
+            item_x, item_y = self.camera.get_sprite_screen_pos(pickup)
+            if 0 <= item_x <= self.window_width and 0 <= item_y <= self.window_height:
+                dx = item_x - player_screen_pos[0]
+                dy = item_y - player_screen_pos[1]
+                distance = (dx * dx + dy * dy) ** 0.5
+                if distance <= self.lighting_system.light_radius:
+                    alpha = 255
+                elif distance <= self.lighting_system.total_radius:
+                    fade = 1 - ((distance - self.lighting_system.light_radius) / self.lighting_system.light_falloff)
+                    alpha = int(255 * fade)
+                else:
+                    alpha = 0
+                if alpha > 0:
+                    pickup.draw(self.screen, self.camera, alpha)
+
         for enemy in self.enemies:
             enemy_x, enemy_y = self.camera.get_sprite_screen_pos(enemy)
             if 0 <= enemy_x <= self.window_width and 0 <= enemy_y <= self.window_height:
@@ -671,7 +669,7 @@ class GameApp:
         score_text = self.menu_font.render(f"Score: {self.player.score}", True, (255, 255, 255))
         coin_text = self.menu_font.render(f"Coins: {self.player.coin_count}", True, (255, 255, 255))
         slot_text = self.small_font.render(
-            f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen",
+            f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen   E: Inventory",
             True,
             (230, 230, 230),
         )
