@@ -564,7 +564,7 @@ class GameApp:
                 else:
                     alpha = 0
                 if alpha > 0:
-                    enemy.draw(self.screen, self.camera)
+                    enemy.draw(self.screen, self.camera, alpha)
 
         self.player.draw(self.screen, self.camera)
 

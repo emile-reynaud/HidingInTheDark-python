@@ -34,16 +34,16 @@ class Enemy(pygame.sprite.Sprite):
         )
         self.rect = self.image.get_rect(topleft=(x, y))
 
-        self.speed = 1.5
+        self.speed = 3
         self.direction = pygame.math.Vector2(0, 0)
 
         self.world_width = world_width
         self.world_height = world_height
 
         self.experience = random.randint(20, 70)
-        self.max_health = random.randint(10, 30)
+        self.max_health = random.randint(20, 70)
         self.health = self.max_health
-        self.attack = random.randint(1, 15)
+        self.attack = random.randint(5, 20)
         self.defense = random.randint(0, 5)
 
         # AI state
@@ -287,12 +287,13 @@ class Enemy(pygame.sprite.Sprite):
         self.health -= effective_damage
         return effective_damage
 
-    def draw(self, surface, camera):
+    def draw(self, surface, camera, alpha=255):
         screen_rect = camera.apply(self.rect)
+        self.image.set_alpha(alpha)
         surface.blit(self.image, screen_rect)
-        self.draw_health_bar(surface, camera)
+        self.draw_health_bar(surface, camera, alpha)
 
-    def draw_health_bar(self, surface, camera):
+    def draw_health_bar(self, surface, camera, alpha=255):
         screen_rect = camera.apply(self.rect)
 
         bar_width = self.rect.width
@@ -302,12 +303,12 @@ class Enemy(pygame.sprite.Sprite):
 
         pygame.draw.rect(
             surface,
-            (255, 0, 0),
+            (255, 0, 0, alpha),
             (screen_rect.x, screen_rect.y - bar_height - 2, bar_width, bar_height),
         )
         pygame.draw.rect(
             surface,
-            (0, 255, 0),
+            (0, 255, 0, alpha),
             (screen_rect.x, screen_rect.y - bar_height - 2, health_bar_width, bar_height),
         )
 
