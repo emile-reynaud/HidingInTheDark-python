@@ -170,13 +170,13 @@ class InventoryUI:
             index += 1
         return f"{base_id}#{index}"
 
-    def add_item(self, item: dict) -> InventoryItem:
+    def add_item(self, item: dict, quantity=1) -> InventoryItem:
         data = self._normalize_item_dict(item)
         base_id = data["item_id"]
 
         if data["stackable"]:
             if base_id in self.items:
-                self.items[base_id].add(data["quantity"])
+                self.items[base_id].add(quantity)
                 return self.items[base_id]
             final_id = base_id
         else:
@@ -188,7 +188,7 @@ class InventoryUI:
         entry = InventoryItem(
             item_id=final_id,
             name=data["name"],
-            quantity=data["quantity"],
+            quantity=quantity,
             icon_path=data["icon_path"],
             description=data["description"],
             category=data["category"],
