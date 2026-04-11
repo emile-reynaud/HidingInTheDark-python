@@ -28,7 +28,7 @@ class Player(pygame.sprite.Sprite):
         self.health = self.max_health
         self.invulnerable = False
         self.invulnerability_timer = 0
-        self.invulnerability_duration = 100  # milliseconds
+        self.invulnerability_duration = 50  # milliseconds
         self.attack = 10
         self.defense = 5
         self.speed = PLAYER_SPEED

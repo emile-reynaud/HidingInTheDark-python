@@ -25,7 +25,7 @@ class Coin(pygame.sprite.Sprite):
         # self.image = pygame.Surface((COIN_SIZE, COIN_SIZE), pygame.SRCALPHA).convert_alpha()
         # self.image.fill((0, 0, 0, 0))  # Fully transparent background
         # pygame.draw.circle(self.image, COIN_COLOR, (COIN_SIZE // 2, COIN_SIZE // 2), COIN_SIZE // 2)
-        self.image = pygame.transform.scale(pygame.image.load('assets/textures/coin/coin.png').convert_alpha(), (COIN_SIZE, COIN_SIZE))
+        self.image = pygame.transform.scale(pygame.image.load('assets/textures/items/coin.png').convert_alpha(), (COIN_SIZE, COIN_SIZE))
         self.rect = self.image.get_rect()
         self.col = col
         self.row = row
