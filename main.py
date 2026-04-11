@@ -1,165 +1,498 @@
-"""Main game entry point."""
+"""Main game entry point with menu, save slots, options, and animated preview."""
+
+import json
+import os
+import random
+import sys
 
 import pygame
-import sys
-from coin import Coin, generate_coin_grid
-from config import SCREEN_WIDTH, SCREEN_HEIGHT, FPS
-from player import Player
-from background import create_background
-from camera import Camera
-from lighting import LightingSystem
-from walls import generate_wall_grid, draw_walls
 import pyautogui
 
-# Initialize pygame
-pygame.init()
+from background import create_background
+from Camera import Camera
+from Coin import Coin, generate_coin_grid
+from config import FPS, SCREEN_HEIGHT, SCREEN_WIDTH
+from Lighting import LightingSystem
+from Player import Player
+from walls import draw_walls, generate_wall_grid
+from Button import Button
 
-fullscreen = False  # Set to True for fullscreen mode
 
-window_width, window_height = SCREEN_WIDTH, SCREEN_HEIGHT
-monitor_width, monitor_height = pyautogui.size()
-print(f"Monitor size: {monitor_width}x{monitor_height}")
+SAVE_DIR = "saves"
+SAVE_SLOTS = 3
+DEFAULT_LIGHT_RADIUS = 280
+DEFAULT_LIGHT_FALLOFF = 100
+TITLE = "Hiding in the Dark"
 
-# Create the game window with optimizations
-screen = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
-pygame.display.set_caption("Hiding in the Dark")
+MENU = "menu"
+SAVE_SELECT = "save_select"
+OPTIONS = "options"
+GAME = "game"
 
-# Clock for controlling frame rate
-clock = pygame.time.Clock()
 
-# Font for FPS display
-font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 36)
+class GameApp:
+    def __init__(self):
+        pygame.init()
+        self.fullscreen = True
+        self.monitor_width, self.monitor_height = pyautogui.size()
 
-# Create background (returns surface, width, height)
-background, world_width, world_height = create_background()
-background = background.convert()
+        if self.fullscreen:
+            self.window_width, self.window_height = self.monitor_width, self.monitor_height
+            self.screen = pygame.display.set_mode(
+                (self.window_width, self.window_height),
+                pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF,
+            )
+        else:
+            self.window_width, self.window_height = SCREEN_WIDTH, SCREEN_HEIGHT
+            self.screen = pygame.display.set_mode(
+                (self.window_width, self.window_height),
+                pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
+            )
+        
+        pygame.display.set_caption(TITLE)
 
-# Create walls and draw them onto the background
-wall_grid = generate_wall_grid(world_width, world_height)
-draw_walls(background, wall_grid)
+        self.clock = pygame.time.Clock()
+        self.big_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 76)
+        self.menu_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 42)
+        self.small_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 26)
 
-# Create camera
-camera = Camera(world_width, world_height, window_width, window_height)
+        self.running = True
+        self.state = MENU
+        self.selected_slot = None
+        self.message = ""
+        self.preview_time = 0.0
+        self.preview_camera = None
 
-coins = pygame.sprite.Group()  # Group to hold coin sprites
-coin_grid = generate_coin_grid(world_width, world_height, wall_grid)
-for row in range(len(coin_grid)):
-    for col in range(len(coin_grid[row])):
-        if coin_grid[row][col] == 1:
-            coin = Coin(col, row)
-            coins.add(coin)
+        self.music_enabled = True
+        self.show_fps = True
 
-# Create player (starting at center of world)
-player = Player(world_width // 2, world_height // 2, world_width, world_height)
+        self.background = None
+        self.world_width = 0
+        self.world_height = 0
+        self.wall_grid = None
+        self.coins = pygame.sprite.Group()
+        self.player = None
+        self.camera = None
+        self.lighting_system = None
+        self.temp_surface = pygame.Surface((self.window_width, self.window_height)).convert()
 
-# Create lighting system
-lighting_system = LightingSystem(window_width, window_height, light_radius=280, light_falloff=100)
+        self.menu_buttons = []
+        self.save_buttons = []
+        self.options_buttons = []
 
-# Create a temporary surface for scene rendering (avoid repeated full-screen copies)
-temp_surface = pygame.Surface((window_width, window_height)).convert()
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        self.create_menu_buttons()
+        self.create_save_buttons()
+        self.create_options_buttons()
+        self.build_preview_world(seed=9999)
 
-# Main game loop
-running = True
-while running:
-    # Event handling
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+    def save_path(self, slot):
+        return os.path.join(SAVE_DIR, f"slot_{slot}.json")
 
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                if fullscreen:
-                    fullscreen = False
-                    window_width, window_height = SCREEN_WIDTH, SCREEN_HEIGHT
-                    screen = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
-                    camera.set_viewport_size(window_width, window_height)
-                    lighting_system.set_screen_size(window_width, window_height)
-                    temp_surface = pygame.Surface((window_width, window_height)).convert()
-            if event.key == pygame.K_f:
-                fullscreen = not fullscreen
-                if fullscreen:
-                    window_width, window_height = monitor_width, monitor_height
-                    screen = pygame.display.set_mode((window_width, window_height), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
-                else:
-                    window_width, window_height = SCREEN_WIDTH, SCREEN_HEIGHT
-                    screen = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
-                camera.set_viewport_size(window_width, window_height)
-                lighting_system.set_screen_size(window_width, window_height)
-                temp_surface = pygame.Surface((window_width, window_height)).convert()
+    def slot_exists(self, slot):
+        return os.path.exists(self.save_path(slot))
 
-        elif event.type == pygame.VIDEORESIZE and not fullscreen:
-            window_width, window_height = event.w, event.h
-            screen = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE)
-            camera.set_viewport_size(window_width, window_height)
-            lighting_system.set_screen_size(window_width, window_height)
-            temp_surface = pygame.Surface((window_width, window_height)).convert()
-    
-    # Get pressed keys
-    keys = pygame.key.get_pressed()
-    
-    # Update player
-    player.handle_input(keys)
-    player.update(wall_grid)
-    
-    # Update camera to follow player
-    camera.follow_player(player)
-    
-    # Draw background to temp surface (only visible portion)
-    camera_rect = pygame.Rect(camera.x, camera.y, window_width, window_height)
-    temp_surface.fill((0, 0, 0))  # Clear temp surface
-    temp_surface.blit(background, (0, 0), camera_rect)
+    def read_slot(self, slot):
+        path = self.save_path(slot)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
 
-    for coin in pygame.sprite.spritecollide(player, coins, dokill=True):
-        player.coin_count += 1
-        coin_grid[coin.row][coin.col] = 0  # Mark coin as collected in grid
-    
-    # Get player positions for lighting
-    player_screen_pos = camera.get_sprite_screen_pos(player)
-    player_world_pos = player.rect.center
+    def write_slot(self, slot):
+        if self.player is None:
+            return
 
-    # for coin in coins:
-    #     camera_pos = camera.get_sprite_screen_pos(coin)
-    #     if 0 <= camera_pos[0] <= SCREEN_WIDTH and 0 <= camera_pos[1] <= SCREEN_HEIGHT:
-    #         coin.draw(temp_surface, camera)
+        coin_positions = []
+        for coin in self.coins:
+            coin_positions.append([coin.col, coin.row])
 
-    # Apply lighting overlay - player is the light source
-    lighting_system.apply_lighting(screen, temp_surface, player_screen_pos)
+        data = {
+            "slot": slot,
+            "seed": self.current_seed,
+            "player_x": self.player.rect.centerx,
+            "player_y": self.player.rect.centery,
+            "coin_count": self.player.coin_count,
+            "remaining_coins": coin_positions,
+        }
+        with open(self.save_path(slot), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
-    for coin in coins:
-        coin_x, coin_y = camera.get_sprite_screen_pos(coin)
+    def delete_slot(self, slot):
+        path = self.save_path(slot)
+        if os.path.exists(path):
+            os.remove(path)
 
-        if 0 <= coin_x <= window_width and 0 <= coin_y <= window_height:
-            dx = coin_x - player_screen_pos[0]
-            dy = coin_y - player_screen_pos[1]
-            distance = (dx * dx + dy * dy) ** 0.5
+    def create_menu_buttons(self):
+        self.menu_buttons = [
+            Button("Play", (0, 0, 320, 76), self.menu_font, self.open_save_select, self.small_font),
+            Button("Options", (0, 0, 320, 76), self.menu_font, self.open_options, self.small_font),
+            Button("Quit Game", (0, 0, 320, 76), self.menu_font, self.quit_game, self.small_font),
+        ]
+        self.layout_menu_buttons()
 
-            if distance <= lighting_system.light_radius:
-                alpha = 255
-            elif distance <= lighting_system.total_radius:
-                fade = 1 - ((distance - lighting_system.light_radius) / lighting_system.light_falloff)
-                alpha = int(255 * fade)
+    def create_save_buttons(self):
+        self.save_buttons = []
+        for slot in range(1, SAVE_SLOTS + 1):
+            self.save_buttons.append(
+                Button(f"Save Slot {slot}", (0, 0, 360, 110), self.menu_font, lambda s=slot: self.start_slot(s), self.small_font)
+            )
+        self.layout_save_buttons()
+
+    def create_options_buttons(self):
+        self.options_buttons = [
+            Button("Fullscreen", (0, 0, 360, 76), self.menu_font, self.toggle_fullscreen, self.small_font),
+            Button("FPS Counter", (0, 0, 360, 76), self.menu_font, self.toggle_fps, self.small_font),
+            Button("Back", (0, 0, 300, 60), self.menu_font, self.back_to_menu, self.small_font),
+        ]
+        self.layout_options_buttons()
+
+    def layout_menu_buttons(self):
+        start_x = self.window_width // 2 - self.menu_buttons[0].rect.width // 2
+        start_y = self.window_height // 2 - 20
+        spacing = 95
+        for index, button in enumerate(self.menu_buttons):
+            button.set_rect((start_x, start_y + index * spacing, 320, 76))
+
+    def layout_save_buttons(self):
+        width = 360
+        height = 110
+        gap = 40
+        total = SAVE_SLOTS * width + (SAVE_SLOTS - 1) * gap
+        start_x = max(40, (self.window_width - total) // 2)
+        y = self.window_height // 2 - height // 2 + 30
+        for index, button in enumerate(self.save_buttons):
+            button.set_rect((start_x + index * (width + gap), y, width, height))
+
+    def layout_options_buttons(self):
+        x = self.window_width // 2 - 180
+        start_y = self.window_height // 2 - 30
+        spacing = 150
+        for index, button in enumerate(self.options_buttons):
+            button.set_rect((x, start_y + index * spacing, 360, 76))
+
+    def refresh_button_info(self):
+        for index, button in enumerate(self.save_buttons, start=1):
+            slot_data = self.read_slot(index)
+            if slot_data:
+                button.set_info(
+                    f"Coins: {slot_data.get('coin_count', 0)}",
+                    f"Seed: {slot_data.get('seed', 'unknown')}",
+                )
             else:
-                alpha = 0
+                button.set_info("Empty slot", "Start a new run")
 
-            if alpha > 0:
-                coin.draw(screen, camera, alpha)
-    
-    # Draw player
-    player.draw(screen, camera)
-    
-    # Display FPS counter
-    fps = clock.get_fps()
-    fps_text = font.render(f"FPS: {fps:.0f}", True, (255, 255, 255))
-    coin_counter_text = font.render(f"Coins: {player.coin_count}", True, (255, 255, 255))
-    screen.blit(fps_text, (10, 10))
-    screen.blit(coin_counter_text, (10, 50))
-    
-    # Update display
-    pygame.display.flip()
-    
-    # Control frame rate
-    clock.tick(FPS)
+        self.options_buttons[0].set_info("On" if self.fullscreen else "Off")
+        self.options_buttons[1].set_info("Visible" if self.show_fps else "Hidden")
+        self.options_buttons[2].set_info("Return to main menu")
 
-# Quit
-pygame.quit()
-sys.exit()
+    def build_preview_world(self, seed):
+        self.current_seed = seed
+        random.seed(seed)
+        self.background, self.world_width, self.world_height = create_background()
+        self.background = self.background.convert()
+        self.wall_grid = generate_wall_grid(self.world_width, self.world_height)
+        draw_walls(self.background, self.wall_grid)
+        self.coins = self.build_coins_from_grid(generate_coin_grid(self.world_width, self.world_height, self.wall_grid))
+        self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height)
+        self.camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
+        self.preview_camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
+        self.lighting_system = LightingSystem(self.window_width, self.window_height, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_FALLOFF)
+        self.temp_surface = pygame.Surface((self.window_width, self.window_height)).convert()
+
+    def build_world_for_slot(self, slot_data=None, slot=None):
+        if slot_data is None:
+            seed = random.randint(1000, 999999)
+            self.build_preview_world(seed)
+            self.selected_slot = slot
+            self.message = f"Started new game in slot {slot}"
+            return
+
+        seed = slot_data.get("seed", random.randint(1000, 999999))
+        self.build_preview_world(seed)
+        self.selected_slot = slot
+        self.player.rect.center = (
+            slot_data.get("player_x", self.world_width // 2),
+            slot_data.get("player_y", self.world_height // 2),
+        )
+        self.player.coin_count = slot_data.get("coin_count", 0)
+
+        remaining = slot_data.get("remaining_coins")
+        if isinstance(remaining, list):
+            self.coins = pygame.sprite.Group()
+            for col, row in remaining:
+                self.coins.add(Coin(col, row))
+
+        self.message = f"Loaded slot {slot}"
+
+    def build_coins_from_grid(self, coin_grid):
+        coins = pygame.sprite.Group()
+        for row in range(len(coin_grid)):
+            for col in range(len(coin_grid[row])):
+                if coin_grid[row][col] == 1:
+                    coins.add(Coin(col, row))
+        return coins
+
+    def open_save_select(self):
+        self.state = SAVE_SELECT
+        self.refresh_button_info()
+        self.message = "Choose one of the 3 save slots"
+
+    def open_options(self):
+        self.state = OPTIONS
+        self.refresh_button_info()
+        self.message = "Options menu"
+
+    def back_to_menu(self):
+        self.state = MENU
+        self.refresh_button_info()
+        self.message = "Main menu"
+
+    def start_slot(self, slot):
+        slot_data = self.read_slot(slot)
+        self.build_world_for_slot(slot_data=slot_data, slot=slot)
+        self.state = GAME
+
+    def save_current_game(self):
+        if self.selected_slot is not None:
+            self.write_slot(self.selected_slot)
+            self.message = f"Saved slot {self.selected_slot}"
+
+    def quit_to_menu(self):
+        self.save_current_game()
+        preview_seed = 9999 if self.selected_slot is None else self.current_seed
+        self.build_preview_world(preview_seed)
+        self.state = MENU
+        self.refresh_button_info()
+        self.message = "Returned to main menu"
+
+    def quit_game(self):
+        if self.state == GAME:
+            self.save_current_game()
+        self.running = False
+
+    def toggle_fps(self):
+        self.show_fps = not self.show_fps
+        self.refresh_button_info()
+
+    def toggle_fullscreen(self):
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.window_width, self.window_height = self.monitor_width, self.monitor_height
+            self.screen = pygame.display.set_mode(
+                (self.window_width, self.window_height),
+                pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF,
+            )
+        else:
+            self.window_width, self.window_height = SCREEN_WIDTH, SCREEN_HEIGHT
+            self.screen = pygame.display.set_mode(
+                (self.window_width, self.window_height),
+                pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
+            )
+
+        self.camera.set_viewport_size(self.window_width, self.window_height)
+        self.preview_camera.set_viewport_size(self.window_width, self.window_height)
+        self.lighting_system.set_screen_size(self.window_width, self.window_height)
+        self.temp_surface = pygame.Surface((self.window_width, self.window_height)).convert()
+        self.layout_menu_buttons()
+        self.layout_save_buttons()
+        self.layout_options_buttons()
+        self.refresh_button_info()
+
+    def resize_window(self, width, height):
+        self.window_width, self.window_height = width, height
+        self.screen = pygame.display.set_mode(
+            (self.window_width, self.window_height),
+            pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
+        )
+        self.camera.set_viewport_size(self.window_width, self.window_height)
+        self.preview_camera.set_viewport_size(self.window_width, self.window_height)
+        self.lighting_system.set_screen_size(self.window_width, self.window_height)
+        self.temp_surface = pygame.Surface((self.window_width, self.window_height)).convert()
+        self.layout_menu_buttons()
+        self.layout_save_buttons()
+        self.layout_options_buttons()
+
+    def handle_global_keys(self, event):
+        if event.type != pygame.KEYDOWN:
+            return
+
+        if event.key == pygame.K_f:
+            self.toggle_fullscreen()
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            if self.state == GAME:
+                self.save_current_game()
+                self.quit_to_menu()
+            elif self.state in (SAVE_SELECT, OPTIONS):
+                self.back_to_menu()
+            else:
+                self.running = False
+
+        if self.state == GAME and event.key == pygame.K_F5:
+            self.save_current_game()
+
+    def handle_events(self):
+        active_buttons = []
+        if self.state == MENU:
+            active_buttons = self.menu_buttons
+        elif self.state == SAVE_SELECT:
+            active_buttons = self.save_buttons
+        elif self.state == OPTIONS:
+            active_buttons = self.options_buttons
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.quit_game()
+                continue
+
+            self.handle_global_keys(event)
+
+            if event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                self.resize_window(event.w, event.h)
+                continue
+
+            for button in active_buttons:
+                if button.handle_event(event):
+                    break
+
+    def update_preview(self, dt):
+        self.preview_time += dt
+        px = int(self.world_width * 0.5 + (self.world_width * 0.22) * pygame.math.Vector2(1, 0).rotate(self.preview_time * 22).x)
+        py = int(self.world_height * 0.5 + (self.world_height * 0.18) * pygame.math.Vector2(0, 1).rotate(self.preview_time * 18).y)
+        self.preview_camera.x = max(0, min(px - self.window_width // 2, self.world_width - self.window_width))
+        self.preview_camera.y = max(0, min(py - self.window_height // 2, self.world_height - self.window_height))
+
+    def update_game(self):
+        keys = pygame.key.get_pressed()
+        self.player.handle_input(keys)
+        self.player.update(self.wall_grid)
+        self.camera.follow_player(self.player)
+
+        for coin in pygame.sprite.spritecollide(self.player, self.coins, dokill=True):
+            self.player.coin_count += 1
+
+    def render_world(self, active_camera):
+        camera_rect = pygame.Rect(active_camera.x, active_camera.y, self.window_width, self.window_height)
+        self.temp_surface.fill((0, 0, 0))
+        self.temp_surface.blit(self.background, (0, 0), camera_rect)
+
+    def render_preview(self):
+        self.render_world(self.preview_camera)
+        self.screen.blit(self.temp_surface, (0, 0))
+
+        shade = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 135))
+        self.screen.blit(shade, (0, 0))
+
+        title = self.big_font.render(TITLE, True, (240, 240, 240))
+        self.screen.blit(title, (self.window_width // 2 - title.get_width() // 2, self.window_height // 2 - title.get_height() - 60))
+
+        for button in self.menu_buttons:
+            button.draw(self.screen)
+
+        info = self.small_font.render(self.message, True, (220, 220, 220))
+        self.screen.blit(info, (82, self.window_height - 70))
+
+    def render_save_select(self):
+        self.render_world(self.preview_camera)
+        self.screen.blit(self.temp_surface, (0, 0))
+
+        shade = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 135))
+        self.screen.blit(shade, (0, 0))
+
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 70))
+        self.screen.blit(overlay, (0, 0))
+
+        header = self.menu_font.render("Choose a Save Slot", True, (255, 255, 255))
+        self.screen.blit(header, (self.window_width // 2 - header.get_width() // 2, 120))
+
+        hint = self.small_font.render("Click a slot to start or continue", True, (220, 220, 220))
+        self.screen.blit(hint, (self.window_width // 2 - hint.get_width() // 2, 200))
+
+        for button in self.save_buttons:
+            button.draw(self.screen)
+
+    def render_options(self):
+        self.render_world(self.preview_camera)
+        self.screen.blit(self.temp_surface, (0, 0))
+
+        shade = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 135))
+        self.screen.blit(shade, (0, 0))
+
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 90))
+        self.screen.blit(overlay, (0, 0))
+
+        header = self.menu_font.render("Options", True, (255, 255, 255))
+        self.screen.blit(header, (self.window_width // 2 - header.get_width() // 2, 130))
+
+        for button in self.options_buttons:
+            button.draw(self.screen)
+
+    def render_game(self):
+        self.render_world(self.camera)
+        player_screen_pos = self.camera.get_sprite_screen_pos(self.player)
+        self.lighting_system.apply_lighting(self.screen, self.temp_surface, player_screen_pos)
+
+        for coin in self.coins:
+            coin_x, coin_y = self.camera.get_sprite_screen_pos(coin)
+            if 0 <= coin_x <= self.window_width and 0 <= coin_y <= self.window_height:
+                dx = coin_x - player_screen_pos[0]
+                dy = coin_y - player_screen_pos[1]
+                distance = (dx * dx + dy * dy) ** 0.5
+                if distance <= self.lighting_system.light_radius:
+                    alpha = 255
+                elif distance <= self.lighting_system.total_radius:
+                    fade = 1 - ((distance - self.lighting_system.light_radius) / self.lighting_system.light_falloff)
+                    alpha = int(255 * fade)
+                else:
+                    alpha = 0
+                if alpha > 0:
+                    coin.draw(self.screen, self.camera, alpha)
+
+        self.player.draw(self.screen, self.camera)
+
+        coin_text = self.menu_font.render(f"Coins: {self.player.coin_count}", True, (255, 255, 255))
+        self.screen.blit(coin_text, (15, 12))
+
+        slot_text = self.small_font.render(f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen", True, (230, 230, 230))
+        self.screen.blit(slot_text, (15, 56))
+
+        if self.show_fps:
+            fps = self.small_font.render(f"FPS: {self.clock.get_fps():.0f}", True, (255, 255, 255))
+            self.screen.blit(fps, (15, 84))
+
+    def run(self):
+        self.refresh_button_info()
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            self.handle_events()
+
+            if self.state == GAME:
+                self.update_game()
+                self.render_game()
+            else:
+                self.update_preview(dt)
+                if self.state == MENU:
+                    self.render_preview()
+                elif self.state == SAVE_SELECT:
+                    self.render_save_select()
+                elif self.state == OPTIONS:
+                    self.render_options()
+
+            pygame.display.flip()
+
+        pygame.quit()
+        sys.exit()
+
+
+if __name__ == "__main__":
+    GameApp().run()
