@@ -222,7 +222,7 @@ class GameApp:
         self.enemy_grid = generate_enemy_grid(self.wall_grid, enemy_count=40)
         self.enemies = self.build_enemies_from_grid(self.enemy_grid)
         self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height)
-        self.tile_grid = self.create_tile_grid(self.world_width, self.world_height, TILE_SIZE, self.wall_grid, self.coin_grid, self.enemy_grid, (self.player.rect.x, self.player.rect.y))
+        self.tile_grid = self.create_tile_grid(self.world_width, self.world_height, TILE_SIZE, self.wall_grid, self.coin_grid, self.enemy_grid, (self.player.rect.centerx, self.player.rect.centery))
         self.camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.preview_camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.lighting_system = LightingSystem(self.window_width, self.window_height, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_FALLOFF)
@@ -445,7 +445,7 @@ class GameApp:
                     if self.player.experience >= self.player.experience_to_next_level:
                         self.player.level_up()
         
-        self.update_tile_grid(self.tile_grid, self.coin_grid, self.enemy_grid, (self.player.rect.x, self.player.rect.y))
+        self.update_tile_grid(self.tile_grid, self.coin_grid, self.enemy_grid, (self.player.rect.centerx, self.player.rect.centery))
 
     def render_world(self, active_camera):
         camera_rect = pygame.Rect(active_camera.x, active_camera.y, self.window_width, self.window_height)
@@ -597,7 +597,7 @@ class GameApp:
                     grid[row][col] = 3
                 elif (col * tile_size <= player_pos[0] < (col + 1) * tile_size) and (row * tile_size <= player_pos[1] < (row + 1) * tile_size):
                     grid[row][col] = 4
-        print(grid)
+        # print(grid)
         return grid
     
     def update_tile_grid(self, grid, coin_grid, enemy_grid, player_pos):
