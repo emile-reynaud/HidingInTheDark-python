@@ -8,10 +8,11 @@ import sys
 import pygame
 import pyautogui
 
+from Enemy import Enemy, generate_enemy_grid
 from background import create_background
 from Camera import Camera
 from Coin import Coin, generate_coin_grid
-from config import FPS, SCREEN_HEIGHT, SCREEN_WIDTH
+from config import FPS, PLAYER_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH, TILE_SIZE
 from Lighting import LightingSystem
 from Player import Player
 from walls import draw_walls, generate_wall_grid
@@ -70,6 +71,9 @@ class GameApp:
         self.world_width = 0
         self.world_height = 0
         self.wall_grid = None
+        self.coin_grid = None
+        self.enemy_grid = None
+        self.tile_grid = None
         self.coins = pygame.sprite.Group()
         self.player = None
         self.camera = None
@@ -109,6 +113,10 @@ class GameApp:
         coin_positions = []
         for coin in self.coins:
             coin_positions.append([coin.col, coin.row])
+        
+        enemy_positions = []
+        for enemy in self.enemies:
+            enemy_positions.append([enemy.rect.centerx, enemy.rect.centery])
 
         data = {
             "slot": slot,
@@ -117,6 +125,19 @@ class GameApp:
             "player_y": self.player.rect.centery,
             "coin_count": self.player.coin_count,
             "remaining_coins": coin_positions,
+            "enemy_positions": enemy_positions,
+            "experience": self.player.experience,
+            "level": self.player.level,
+            "health": self.player.health,
+            "max_health": self.player.max_health,
+            "score": self.player.score,
+            "speed": self.player.speed,
+            "attack": self.player.attack,
+            "defense": self.player.defense,
+            "invulnerable": self.player.invulnerable,
+            "invulnerability_timer": self.player.invulnerability_timer,
+            "level_up_experience": self.player.experience_to_next_level,
+            "tile_grid": self.tile_grid,
         }
         with open(self.save_path(slot), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -179,7 +200,7 @@ class GameApp:
             slot_data = self.read_slot(index)
             if slot_data:
                 button.set_info(
-                    f"Coins: {slot_data.get('coin_count', 0)}",
+                    f"Score: {slot_data.get('score', 0)}",
                     f"Seed: {slot_data.get('seed', 'unknown')}",
                 )
             else:
@@ -196,8 +217,12 @@ class GameApp:
         self.background = self.background.convert()
         self.wall_grid = generate_wall_grid(self.world_width, self.world_height)
         draw_walls(self.background, self.wall_grid)
-        self.coins = self.build_coins_from_grid(generate_coin_grid(self.world_width, self.world_height, self.wall_grid))
+        self.coin_grid = generate_coin_grid(self.world_width, self.world_height, self.wall_grid)
+        self.coins = self.build_coins_from_grid(self.coin_grid)
+        self.enemy_grid = generate_enemy_grid(self.wall_grid, enemy_count=40)
+        self.enemies = self.build_enemies_from_grid(self.enemy_grid)
         self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height)
+        self.tile_grid = self.create_tile_grid(self.world_width, self.world_height, TILE_SIZE, self.wall_grid, self.coin_grid, self.enemy_grid, (self.player.rect.x, self.player.rect.y))
         self.camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.preview_camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.lighting_system = LightingSystem(self.window_width, self.window_height, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_FALLOFF)
@@ -225,6 +250,25 @@ class GameApp:
             self.coins = pygame.sprite.Group()
             for col, row in remaining:
                 self.coins.add(Coin(col, row))
+        
+        enemy_positions = slot_data.get("enemy_positions")
+        if isinstance(enemy_positions, list):
+            self.enemies = pygame.sprite.Group()
+            for x, y in enemy_positions:
+                self.enemies.add(Enemy(x, y, self.world_width, self.world_height))
+        
+        self.player.experience = slot_data.get("experience", 0)
+        self.player.level = slot_data.get("level", 1)
+        self.player.health = slot_data.get("health", self.player.max_health)
+        self.player.max_health = slot_data.get("max_health", self.player.max_health)
+        self.player.speed = slot_data.get("speed", self.player.speed)
+        self.player.attack = slot_data.get("attack", self.player.attack)
+        self.player.defense = slot_data.get("defense", self.player.defense)
+        self.player.invulnerable = slot_data.get("invulnerable", False)
+        self.player.invulnerability_timer = slot_data.get("invulnerability_timer", 0)
+        self.player.experience_to_next_level = slot_data.get("level_up_experience", self.player.experience_to_next_level)
+
+        self.tile_grid = slot_data.get("tile_grid", self.tile_grid)
 
         self.message = f"Loaded slot {slot}"
 
@@ -235,6 +279,16 @@ class GameApp:
                 if coin_grid[row][col] == 1:
                     coins.add(Coin(col, row))
         return coins
+    
+    def build_enemies_from_grid(self, enemy_grid):
+        enemies = pygame.sprite.Group()
+        for row in range(len(enemy_grid)):
+            for col in range(len(enemy_grid[row])):
+                if enemy_grid[row][col]:
+                    x = col * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) // 2
+                    y = row * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) // 2
+                    enemies.add(Enemy(x, y, self.world_width, self.world_height))
+        return enemies
 
     def open_save_select(self):
         self.state = SAVE_SELECT
@@ -376,6 +430,23 @@ class GameApp:
         for coin in pygame.sprite.spritecollide(self.player, self.coins, dokill=True):
             self.player.coin_count += 1
 
+        for enemy in self.enemies:
+            enemy.update(self.player.rect.center, self.wall_grid)
+            if enemy._collision_rect().colliderect(self.player._collision_rect()):
+                self.player.hurt(enemy.attack)
+                enemy.hurt(self.player.attack)
+                if self.player.health <= 0:
+                    self.message = "You died! Returning to menu..."
+                    pygame.time.delay(1500)
+                    self.quit_to_menu()
+                if enemy.health <= 0:
+                    self.enemies.remove(enemy)
+                    self.player.experience += enemy.experience
+                    if self.player.experience >= self.player.experience_to_next_level:
+                        self.player.level_up()
+        
+        self.update_tile_grid(self.tile_grid, self.coin_grid, self.enemy_grid, (self.player.rect.x, self.player.rect.y))
+
     def render_world(self, active_camera):
         camera_rect = pygame.Rect(active_camera.x, active_camera.y, self.window_width, self.window_height)
         self.temp_surface.fill((0, 0, 0))
@@ -457,18 +528,37 @@ class GameApp:
                     alpha = 0
                 if alpha > 0:
                     coin.draw(self.screen, self.camera, alpha)
+            
+        for enemy in self.enemies:
+            enemy_x, enemy_y = self.camera.get_sprite_screen_pos(enemy)
+            if 0 <= enemy_x <= self.window_width and 0 <= enemy_y <= self.window_height:
+                dx = enemy_x - player_screen_pos[0]
+                dy = enemy_y - player_screen_pos[1]
+                distance = (dx * dx + dy * dy) ** 0.5
+                if distance <= self.lighting_system.light_radius:
+                    alpha = 255
+                elif distance <= self.lighting_system.total_radius:
+                    fade = 1 - ((distance - self.lighting_system.light_radius) / self.lighting_system.light_falloff)
+                    alpha = int(255 * fade)
+                else:
+                    alpha = 0
+                if alpha > 0:
+                    enemy.draw(self.screen, self.camera)
 
         self.player.draw(self.screen, self.camera)
 
+        score_text = self.menu_font.render(f"Score: {self.player.score}", True, (255, 255, 255))
+        self.screen.blit(score_text, (15, 12))
+
         coin_text = self.menu_font.render(f"Coins: {self.player.coin_count}", True, (255, 255, 255))
-        self.screen.blit(coin_text, (15, 12))
+        self.screen.blit(coin_text, (15, 52))
 
         slot_text = self.small_font.render(f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen", True, (230, 230, 230))
-        self.screen.blit(slot_text, (15, 56))
+        self.screen.blit(slot_text, (15, 102))
 
         if self.show_fps:
             fps = self.small_font.render(f"FPS: {self.clock.get_fps():.0f}", True, (255, 255, 255))
-            self.screen.blit(fps, (15, 84))
+            self.screen.blit(fps, (15, 132))
 
     def run(self):
         self.refresh_button_info()
@@ -492,6 +582,42 @@ class GameApp:
 
         pygame.quit()
         sys.exit()
+
+    def create_tile_grid(self, width, height, tile_size, wall_grid, coin_grid, enemy_grid, player_pos):
+        cols = width // tile_size
+        rows = height // tile_size
+        grid = [[0 for _ in range(cols)] for _ in range(rows)]
+        for row in range(rows):
+            for col in range(cols):
+                if wall_grid[row][col] == 1:
+                    grid[row][col] = 1
+                elif coin_grid[row][col] == 1:
+                    grid[row][col] = 2
+                elif enemy_grid[row][col] == 1:
+                    grid[row][col] = 3
+                elif (col * tile_size <= player_pos[0] < (col + 1) * tile_size) and (row * tile_size <= player_pos[1] < (row + 1) * tile_size):
+                    grid[row][col] = 4
+        print(grid)
+        return grid
+    
+    def update_tile_grid(self, grid, coin_grid, enemy_grid, player_pos):
+        cols = len(grid[0])
+        rows = len(grid)
+        for row in range(rows):
+            for col in range(cols):
+                if grid[row][col] == 1:
+                    continue
+                elif coin_grid[row][col] == 1:
+                    grid[row][col] = 2
+                elif enemy_grid[row][col] == 1:
+                    grid[row][col] = 3
+                elif (col * TILE_SIZE <= player_pos[0] < (col + 1) * TILE_SIZE) and (row * TILE_SIZE <= player_pos[1] < (row + 1) * TILE_SIZE):
+                    grid[row][col] = 4
+                else:
+                    grid[row][col] = 0
+        
+        # print(grid)
+        
 
 
 if __name__ == "__main__":
