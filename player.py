@@ -1,7 +1,7 @@
 """Player sprite and movement logic."""
 
 import pygame
-from config import DARK_GRAY, LIGHT_GRAY, PLAYER_SIZE, PLAYER_SPEED, TILE_SIZE
+from config import *
 
 
 class Player(pygame.sprite.Sprite):
@@ -55,6 +55,8 @@ class Player(pygame.sprite.Sprite):
     
     def update(self, wall_grid):
         """Update player position in world space with wall collisions."""
+        self._snap_to_corridor(wall_grid)
+
         self.rect.x += self.vel_x
         self._resolve_wall_collision('x', wall_grid)
 
@@ -118,6 +120,40 @@ class Player(pygame.sprite.Sprite):
         if self.rect.bottom > self.world_height:
             self.rect.bottom = self.world_height
 
+    def _snap_to_corridor(self, wall_grid):
+        center_x = self.rect.centerx
+        center_y = self.rect.centery
+
+        col = center_x // TILE_SIZE
+        row = center_y // TILE_SIZE
+
+        rows = len(wall_grid)
+        cols = len(wall_grid[0])
+
+        if not (0 <= row < rows and 0 <= col < cols):
+            return
+
+        tile_center_x = col * TILE_SIZE + TILE_SIZE // 2
+        tile_center_y = row * TILE_SIZE + TILE_SIZE // 2
+
+        snap_strength = 2  # try 1 or 2
+
+        # If moving mostly horizontally, help align vertically
+        if self.vel_x != 0 and self.vel_y == 0:
+            if abs(center_y - tile_center_y) <= TILE_SIZE // 3:
+                if center_y < tile_center_y:
+                    self.rect.centery += min(snap_strength, tile_center_y - center_y)
+                elif center_y > tile_center_y:
+                    self.rect.centery -= min(snap_strength, center_y - tile_center_y)
+
+        # If moving mostly vertically, help align horizontally
+        elif self.vel_y != 0 and self.vel_x == 0:
+            if abs(center_x - tile_center_x) <= TILE_SIZE // 3:
+                if center_x < tile_center_x:
+                    self.rect.centerx += min(snap_strength, tile_center_x - center_x)
+                elif center_x > tile_center_x:
+                    self.rect.centerx -= min(snap_strength, center_x - tile_center_x)
+    
     def draw(self, surface, camera):
         """Draw player on surface using camera coordinates."""
         screen_rect = camera.apply(self.rect)
@@ -177,3 +213,4 @@ class Player(pygame.sprite.Sprite):
         pygame.draw.rect(surface, (100, 100, 100, 128), (screen_rect.x, screen_rect.y + self.rect.height + 2, bar_width, bar_height))
         # Foreground bar (blue)
         pygame.draw.rect(surface, (0, 0, 255), (screen_rect.x, screen_rect.y + self.rect.height + 2, experience_bar_width, bar_height))
+    
