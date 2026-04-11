@@ -21,21 +21,27 @@ class Button:
         border = (220, 220, 220) if self.hovered else (130, 130, 130)
 
         panel = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        pygame.draw.rect(panel, bg, panel.get_rect(), border_radius=10)
-        pygame.draw.rect(panel, border, panel.get_rect(), width=2, border_radius=10)
+        radius = max(6, int(min(self.rect.width, self.rect.height) * 0.08))
+        pygame.draw.rect(panel, bg, panel.get_rect(), border_radius=radius)
+        pygame.draw.rect(panel, border, panel.get_rect(), width=2, border_radius=radius)
         surface.blit(panel, self.rect.topleft)
 
+        # --- TITLE (always centered) ---
         text_surf = self.font.render(self.text, True, (255, 255, 255))
         text_x = self.rect.centerx - text_surf.get_width() // 2
         text_y = self.rect.centery - text_surf.get_height() // 2
         surface.blit(text_surf, (text_x, text_y))
 
-        line_y = text_y + text_surf.get_height() + 30
-        for line in self.info_lines:
-            info_surf = self.secondary_font.render(line, True, (200, 200, 200))
-            info_x = self.rect.centerx - info_surf.get_width() // 2
-            surface.blit(info_surf, (info_x, line_y))
-            line_y += info_surf.get_height() + 8
+        # --- INFO (always below title) ---
+        if self.info_lines:
+            gap = max(6, self.rect.height // 12)
+            line_y = text_y + self.rect.height + gap // 4
+
+            for line in self.info_lines:
+                info_surf = self.secondary_font.render(line, True, (200, 200, 200))
+                info_x = self.rect.centerx - info_surf.get_width() // 2
+                surface.blit(info_surf, (info_x, line_y))
+                line_y += info_surf.get_height() + gap // 2
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEMOTION:

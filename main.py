@@ -34,7 +34,7 @@ GAME = "game"
 class GameApp:
     def __init__(self):
         pygame.init()
-        self.fullscreen = True
+        self.fullscreen = False
         self.monitor_width, self.monitor_height = pyautogui.size()
 
         if self.fullscreen:
@@ -49,13 +49,15 @@ class GameApp:
                 (self.window_width, self.window_height),
                 pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
             )
+
+        self.player = None
+        self.scale = 0
+        
+        self.update_ui_scale()
         
         pygame.display.set_caption(TITLE)
 
         self.clock = pygame.time.Clock()
-        self.big_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 76)
-        self.menu_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 42)
-        self.small_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 26)
 
         self.running = True
         self.state = MENU
@@ -172,28 +174,44 @@ class GameApp:
         self.layout_options_buttons()
 
     def layout_menu_buttons(self):
-        start_x = self.window_width // 2 - self.menu_buttons[0].rect.width // 2
-        start_y = self.window_height // 2 - 20
-        spacing = 95
+        btn_w = int(320 * self.scale)
+        btn_h = int(76 * self.scale)
+        spacing = int(95 * self.scale)
+
+        start_x = self.window_width // 2 - btn_w // 2
+        start_y = self.window_height // 2 - btn_h // 2
+
         for index, button in enumerate(self.menu_buttons):
-            button.set_rect((start_x, start_y + index * spacing, 320, 76))
+            button.font = self.menu_font
+            button.secondary_font = self.small_font
+            button.set_rect((start_x, start_y + index * spacing, btn_w, btn_h))
 
     def layout_save_buttons(self):
-        width = 360
-        height = 110
-        gap = 40
+        width = int(360 * self.scale)
+        height = int(110 * self.scale)
+        gap = int(40 * self.scale)
+
         total = SAVE_SLOTS * width + (SAVE_SLOTS - 1) * gap
-        start_x = max(40, (self.window_width - total) // 2)
-        y = self.window_height // 2 - height // 2 + 30
+        start_x = max(20, (self.window_width - total) // 2)
+        y = self.window_height // 2 - height // 2 + int(30 * self.scale)
+
         for index, button in enumerate(self.save_buttons):
+            button.font = self.menu_font
+            button.secondary_font = self.small_font
             button.set_rect((start_x + index * (width + gap), y, width, height))
 
     def layout_options_buttons(self):
-        x = self.window_width // 2 - 180
-        start_y = self.window_height // 2 - 30
-        spacing = 150
+        width = int(360 * self.scale)
+        height = int(76 * self.scale)
+        spacing = int(150 * self.scale)
+
+        x = self.window_width // 2 - width // 2
+        start_y = self.window_height // 2 - height // 2
+
         for index, button in enumerate(self.options_buttons):
-            button.set_rect((x, start_y + index * spacing, 360, 76))
+            button.font = self.menu_font
+            button.secondary_font = self.small_font
+            button.set_rect((x, start_y + index * spacing, width, height))
 
     def refresh_button_info(self):
         for index, button in enumerate(self.save_buttons, start=1):
@@ -346,7 +364,8 @@ class GameApp:
                 (self.window_width, self.window_height),
                 pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
             )
-
+        
+        self.update_ui_scale()
         self.camera.set_viewport_size(self.window_width, self.window_height)
         self.preview_camera.set_viewport_size(self.window_width, self.window_height)
         self.lighting_system.set_screen_size(self.window_width, self.window_height)
@@ -362,6 +381,8 @@ class GameApp:
             (self.window_width, self.window_height),
             pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE,
         )
+
+        self.update_ui_scale()
         self.camera.set_viewport_size(self.window_width, self.window_height)
         self.preview_camera.set_viewport_size(self.window_width, self.window_height)
         self.lighting_system.set_screen_size(self.window_width, self.window_height)
@@ -547,18 +568,28 @@ class GameApp:
 
         self.player.draw(self.screen, self.camera)
 
+        pad_x = int(15 * self.scale)
+        pad_y = int(12 * self.scale)
+        line_gap = int(10 * self.scale)
+
         score_text = self.menu_font.render(f"Score: {self.player.score}", True, (255, 255, 255))
-        self.screen.blit(score_text, (15, 12))
-
         coin_text = self.menu_font.render(f"Coins: {self.player.coin_count}", True, (255, 255, 255))
-        self.screen.blit(coin_text, (15, 52))
+        slot_text = self.small_font.render(
+            f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen",
+            True,
+            (230, 230, 230),
+        )
 
-        slot_text = self.small_font.render(f"Slot {self.selected_slot}   ESC: Menu   F5: Save   F: Fullscreen", True, (230, 230, 230))
-        self.screen.blit(slot_text, (15, 102))
+        self.screen.blit(score_text, (pad_x, pad_y))
+        self.screen.blit(coin_text, (pad_x, pad_y + score_text.get_height() + line_gap))
+        self.screen.blit(slot_text, (pad_x, pad_y + score_text.get_height() + coin_text.get_height() + line_gap * 2))
 
         if self.show_fps:
             fps = self.small_font.render(f"FPS: {self.clock.get_fps():.0f}", True, (255, 255, 255))
-            self.screen.blit(fps, (15, 132))
+            self.screen.blit(
+                fps,
+                (pad_x, pad_y + score_text.get_height() + coin_text.get_height() + slot_text.get_height() + line_gap * 3),
+            )
 
     def run(self):
         self.refresh_button_info()
@@ -617,8 +648,22 @@ class GameApp:
                     grid[row][col] = 0
         
         # print(grid)
-        
 
+    def update_ui_scale(self):
+        base_w, base_h = self.monitor_width, self.monitor_height
+        self.scale = min(self.window_width / base_w, self.window_height / base_h)
+
+        title_size = max(36, int(76 * self.scale))
+        menu_size = max(22, int(42 * self.scale))
+        small_size = max(14, int(26 * self.scale))
+
+        self.big_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", title_size)
+        self.menu_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", menu_size)
+        self.small_font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", small_size)
+
+        # Keep player text scaled too
+        if self.player is not None:
+            self.player.font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", max(10, int(12 * self.scale)))
 
 if __name__ == "__main__":
     GameApp().run()
