@@ -286,7 +286,7 @@ class InventoryUI:
     def _draw_header(self, surface: pygame.Surface) -> None:
         title = self.title_font.render("Inventory", True, self.text_color)
         subtitle = self.small_font.render(
-            f"Unlimited capacity   •   {self.total_item_types()} item types   •   {self.total_item_count()} total items",
+            f"{self.total_item_types()} item types   •   {self.total_item_count()} total items",
             True,
             self.subtext_color,
         )
