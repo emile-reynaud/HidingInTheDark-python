@@ -75,7 +75,7 @@ class Player(pygame.sprite.Sprite):
             if self.health > self.max_health:
                 self.health = self.max_health
 
-        self.score = self.coin_count * 10 + self.experience * 5 + self.level * 20
+        self.score = self.coin_count * 10 + self.experience * 5 + self.level * 1000 - 1000
 
     def _collision_rect(self):
         margin = self.COLLISION_MARGIN
