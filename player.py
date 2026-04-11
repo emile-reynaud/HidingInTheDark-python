@@ -1,7 +1,7 @@
 """Player sprite and movement logic."""
 
 import pygame
-from config import PLAYER_SIZE, PLAYER_COLOR, PLAYER_SPEED, TILE_SIZE
+from config import DARK_GRAY, LIGHT_GRAY, PLAYER_SIZE, PLAYER_SPEED, TILE_SIZE
 
 
 class Player(pygame.sprite.Sprite):
@@ -15,11 +15,28 @@ class Player(pygame.sprite.Sprite):
         # self.image.fill(PLAYER_COLOR)
         self.image = pygame.transform.scale(pygame.image.load('assets/textures/player/player.png').convert_alpha(), (PLAYER_SIZE, PLAYER_SIZE))
         self.rect = self.image.get_rect(center=(x, y))
+
+        self.font = pygame.font.Font("assets/fonts/Kenney Mini.ttf", 12)
+
         self.vel_x = 0
         self.vel_y = 0
         self.world_width = world_width
         self.world_height = world_height
         self.coin_count = 0
+
+        self.max_health = 100
+        self.health = self.max_health
+        self.invulnerable = False
+        self.invulnerability_timer = 0
+        self.invulnerability_duration = 100  # milliseconds
+        self.attack = 10
+        self.defense = 5
+        self.speed = PLAYER_SPEED
+        self.level = 1
+        self.experience = 0
+        self.experience_to_next_level = 100
+
+        self.score = 0
     
     def handle_input(self, keys):
         """Handle player movement based on input."""
@@ -28,13 +45,13 @@ class Player(pygame.sprite.Sprite):
         
         # ZQSD controls (French AZERTY)
         if keys[pygame.K_z]:  # Up
-            self.vel_y = -PLAYER_SPEED
+            self.vel_y = -self.speed
         if keys[pygame.K_s]:  # Down
-            self.vel_y = PLAYER_SPEED
+            self.vel_y = self.speed
         if keys[pygame.K_q]:  # Left
-            self.vel_x = -PLAYER_SPEED
+            self.vel_x = -self.speed
         if keys[pygame.K_d]:  # Right
-            self.vel_x = PLAYER_SPEED
+            self.vel_x = self.speed
     
     def update(self, wall_grid):
         """Update player position in world space with wall collisions."""
@@ -45,6 +62,18 @@ class Player(pygame.sprite.Sprite):
         self._resolve_wall_collision('y', wall_grid)
 
         self._clamp_bounds()
+
+        if self.invulnerable:
+            current_time = pygame.time.get_ticks()
+            if current_time - self.invulnerability_timer >= self.invulnerability_duration:
+                self.invulnerable = False
+
+        if self.health < self.max_health:
+            self.health += 0.05  # Regenerate health slowly
+            if self.health > self.max_health:
+                self.health = self.max_health
+
+        self.score = self.coin_count * 10 + self.experience * 5 + self.level * 20
 
     def _collision_rect(self):
         margin = self.COLLISION_MARGIN
@@ -93,3 +122,58 @@ class Player(pygame.sprite.Sprite):
         """Draw player on surface using camera coordinates."""
         screen_rect = camera.apply(self.rect)
         surface.blit(self.image, screen_rect)
+        self.draw_health_bar(surface, camera)
+        self.draw_experience_bar(surface, camera)
+    
+    def draw_health_bar(self, surface, camera):
+        """Draw the player's health bar above the sprite."""
+        screen_rect = camera.apply(self.rect)
+        bar_width = self.rect.width
+        bar_height = 5
+        health_ratio = self.health / self.max_health
+        health_bar_width = int(bar_width * health_ratio)
+
+        # Background bar (red)
+        pygame.draw.rect(surface, (255, 0, 0), (screen_rect.x, screen_rect.y - bar_height - 2, bar_width, bar_height))
+        # Foreground bar (green)
+        pygame.draw.rect(surface, (0, 255, 0), (screen_rect.x, screen_rect.y - bar_height - 2, health_bar_width, bar_height))
+
+    def hurt(self, damage):
+        """Apply damage to the player, considering defense and invulnerability."""
+        if self.invulnerable:
+            return
+        
+        effective_damage = max(0, damage - self.defense)
+        self.health -= effective_damage
+        if self.health < 0:
+            self.health = 0
+        
+        self.invulnerable = True
+        self.invulnerability_timer = pygame.time.get_ticks()
+    
+    def level_up(self):
+        """Increase player level and improve stats."""
+        self.level += 1
+        self.experience = 0
+        self.experience_to_next_level = int(self.experience_to_next_level * 1.5)
+        self.max_health += 20
+        self.health = self.max_health
+        self.attack += 5
+        self.defense += 2
+        self.speed += 0.5
+
+    def draw_experience_bar(self, surface, camera):
+        """Draw the player's experience bar below the health bar."""
+        screen_rect = camera.apply(self.rect)
+        bar_width = self.rect.width
+        bar_height = 5
+        experience_ratio = self.experience / self.experience_to_next_level
+        experience_bar_width = int(bar_width * experience_ratio)
+
+        level_text = self.font.render(f"Level {self.level}", True, (90, 90, 90, 128))
+        surface.blit(level_text, (screen_rect.x, screen_rect.y - level_text.get_height() - 10))
+
+        # Background bar (gray)
+        pygame.draw.rect(surface, (100, 100, 100, 128), (screen_rect.x, screen_rect.y + self.rect.height + 2, bar_width, bar_height))
+        # Foreground bar (blue)
+        pygame.draw.rect(surface, (0, 0, 255), (screen_rect.x, screen_rect.y + self.rect.height + 2, experience_bar_width, bar_height))
