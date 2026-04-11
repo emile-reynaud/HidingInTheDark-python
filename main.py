@@ -17,6 +17,7 @@ from Lighting import LightingSystem
 from Player import Player
 from walls import draw_walls, generate_wall_grid
 from Button import Button
+from Inventory import InventoryUI
 
 
 SAVE_DIR = "saves"
@@ -86,11 +87,34 @@ class GameApp:
         self.save_buttons = []
         self.options_buttons = []
 
+        self.inventory = InventoryUI(
+            self.window_width,
+            self.window_height,
+            ui_scale=self.scale,
+            font_path="assets/fonts/Kenney Mini.ttf",
+        )
+
         os.makedirs(SAVE_DIR, exist_ok=True)
         self.create_menu_buttons()
         self.create_save_buttons()
         self.create_options_buttons()
         self.build_preview_world(seed=9999)
+
+    def get_inventory_icon(self, item_id, meta=None):
+        normalized_id = (item_id or '').strip().lower()
+        meta = meta or {}
+
+        icon_path = meta.get("icon_path")
+        if not icon_path and normalized_id == "coin":
+            icon_path = "assets/textures/coin/coin.png"
+
+        if not icon_path:
+            return None
+
+        try:
+            return pygame.image.load(icon_path).convert_alpha()
+        except Exception:
+            return None
 
     def save_path(self, slot):
         return os.path.join(SAVE_DIR, f"slot_{slot}.json")
@@ -120,12 +144,24 @@ class GameApp:
         for enemy in self.enemies:
             enemy_positions.append([enemy.rect.centerx, enemy.rect.centery])
 
+        inventory_items = []
+        for item in self.inventory.sorted_items():
+            inventory_items.append({
+                "item_id": item.item_id,
+                "name": item.name,
+                "quantity": item.quantity,
+                "description": item.description,
+                "category": item.category,
+                "meta": item.meta,
+            })
+
         data = {
             "slot": slot,
             "seed": self.current_seed,
             "player_x": self.player.rect.centerx,
             "player_y": self.player.rect.centery,
             "coin_count": self.player.coin_count,
+            "inventory_items": inventory_items,
             "remaining_coins": coin_positions,
             "enemy_positions": enemy_positions,
             "experience": self.player.experience,
@@ -251,6 +287,9 @@ class GameApp:
             seed = random.randint(1000, 999999)
             self.build_preview_world(seed)
             self.selected_slot = slot
+            self.inventory.clear()
+            self.inventory.close()
+            self.player.coin_count = 0
             self.message = f"Started new game in slot {slot}"
             return
 
@@ -262,6 +301,8 @@ class GameApp:
             slot_data.get("player_y", self.world_height // 2),
         )
         self.player.coin_count = slot_data.get("coin_count", 0)
+        self.inventory.clear()
+        self.inventory.close()
 
         remaining = slot_data.get("remaining_coins")
         if isinstance(remaining, list):
@@ -285,6 +326,34 @@ class GameApp:
         self.player.invulnerable = slot_data.get("invulnerable", False)
         self.player.invulnerability_timer = slot_data.get("invulnerability_timer", 0)
         self.player.experience_to_next_level = slot_data.get("level_up_experience", self.player.experience_to_next_level)
+
+        inventory_items = slot_data.get("inventory_items", [])
+        if isinstance(inventory_items, list):
+            for item_data in inventory_items:
+                quantity = int(item_data.get("quantity", 0))
+                if quantity <= 0:
+                    continue
+                item_id = item_data.get("item_id")
+                item_meta = item_data.get("meta", {})
+                self.inventory.add_item(
+                    item_data.get("name", "Item"),
+                    quantity=quantity,
+                    item_id=item_id,
+                    icon=self.get_inventory_icon(item_id, item_meta),
+                    description=item_data.get("description", ""),
+                    category=item_data.get("category", "Misc"),
+                    meta=item_meta,
+                )
+        elif self.player.coin_count > 0:
+            self.inventory.add_item(
+                "Coin",
+                quantity=self.player.coin_count,
+                item_id="coin",
+                icon=self.get_inventory_icon("coin", {"icon_path": "assets/textures/coin/coin.png"}),
+                description="A shiny gold coin.",
+                category="Currency",
+                meta={"icon_path": "assets/textures/coin/coin.png"},
+            )
 
         self.tile_grid = slot_data.get("tile_grid", self.tile_grid)
 
@@ -334,6 +403,7 @@ class GameApp:
             self.message = f"Saved slot {self.selected_slot}"
 
     def quit_to_menu(self):
+        self.inventory.close()
         self.save_current_game()
         preview_seed = 9999 if self.selected_slot is None else self.current_seed
         self.build_preview_world(preview_seed)
@@ -373,6 +443,7 @@ class GameApp:
         self.layout_menu_buttons()
         self.layout_save_buttons()
         self.layout_options_buttons()
+        self.inventory.set_screen_size(self.window_width, self.window_height, self.scale)
         self.refresh_button_info()
 
     def resize_window(self, width, height):
@@ -390,9 +461,14 @@ class GameApp:
         self.layout_menu_buttons()
         self.layout_save_buttons()
         self.layout_options_buttons()
+        self.inventory.set_screen_size(self.window_width, self.window_height, self.scale)
 
     def handle_global_keys(self, event):
         if event.type != pygame.KEYDOWN:
+            return
+
+        if self.state == GAME and event.key == pygame.K_e:
+            self.inventory.toggle()
             return
 
         if event.key == pygame.K_f:
@@ -401,12 +477,16 @@ class GameApp:
 
         if event.key == pygame.K_ESCAPE:
             if self.state == GAME:
-                self.save_current_game()
-                self.quit_to_menu()
+                if self.inventory.open:
+                    self.inventory.close()
+                else:
+                    self.save_current_game()
+                    self.quit_to_menu()
             elif self.state in (SAVE_SELECT, OPTIONS):
                 self.back_to_menu()
             else:
                 self.running = False
+            return
 
         if self.state == GAME and event.key == pygame.K_F5:
             self.save_current_game()
@@ -431,6 +511,9 @@ class GameApp:
                 self.resize_window(event.w, event.h)
                 continue
 
+            if self.state == GAME and self.inventory.handle_event(event):
+                continue
+
             for button in active_buttons:
                 if button.handle_event(event):
                     break
@@ -443,13 +526,26 @@ class GameApp:
         self.preview_camera.y = max(0, min(py - self.window_height // 2, self.world_height - self.window_height))
 
     def update_game(self):
-        keys = pygame.key.get_pressed()
-        self.player.handle_input(keys)
+        if self.inventory.open:
+            self.player.vel_x = 0
+            self.player.vel_y = 0
+        else:
+            keys = pygame.key.get_pressed()
+            self.player.handle_input(keys)
         self.player.update(self.wall_grid)
         self.camera.follow_player(self.player)
 
         for coin in pygame.sprite.spritecollide(self.player, self.coins, dokill=True):
             self.player.coin_count += 1
+            self.inventory.add_item(
+                "Coin",
+                quantity=1,
+                item_id="coin",
+                icon=coin.image,
+                description="A shiny gold coin.",
+                category="Currency",
+                meta={"icon_path": "assets/textures/coin/coin.png"},
+            )
 
         for enemy in self.enemies:
             enemy.update(self.player.rect.center, self.wall_grid)
@@ -590,6 +686,8 @@ class GameApp:
                 fps,
                 (pad_x, pad_y + score_text.get_height() + coin_text.get_height() + slot_text.get_height() + line_gap * 3),
             )
+
+        self.inventory.draw(self.screen)
 
     def run(self):
         self.refresh_button_info()
