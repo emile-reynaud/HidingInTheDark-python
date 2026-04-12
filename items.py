@@ -48,7 +48,7 @@ items = {
         "category": "Misc",
         "description": "Item to test rarity colors",
         "stackable": True,
-        "icon_path": "assets/textures/items/rarity_test.png",
+        "icon_path": "assets/textures/default.png",
         "attack": 0,
         "defense": 2,
         "heal": 0,

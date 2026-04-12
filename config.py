@@ -27,3 +27,6 @@ PLAYER_COLOR = (100, 200, 255)
 # Coin settings
 COIN_SIZE = 30
 COIN_COLOR = (255, 215, 0)
+
+# Default texture
+DEFAULT_TEXTURE = "assets/textures/default.png"

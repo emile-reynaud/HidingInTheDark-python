@@ -8,6 +8,7 @@ import pygame
 
 from GameItem import GameItem
 from Hotbar import Hotbar
+from config import DEFAULT_TEXTURE
 
 
 Color = Tuple[int, int, int]
@@ -201,7 +202,7 @@ class InventoryUI:
             "item_base_id": base_id,
             "name": str(item.get("name", base_id.title())),
             "quantity": max(1, int(item.get("quantity", 1))),
-            "icon_path": item.get("icon_path"),
+            "icon_path": item.get("icon_path", DEFAULT_TEXTURE),
             "description": str(item.get("description", "")),
             "category": str(item.get("category", "Misc")),
             "rarity": str(item.get("rarity", "common")),
@@ -354,7 +355,7 @@ class InventoryUI:
 
         return self.panel_rect.collidepoint(getattr(event, "pos", (-1, -1)))
 
-    def _get_icon(self, icon_path: Optional[str]) -> Optional[pygame.Surface]:
+    def _get_icon(self, icon_path: Optional[str] = DEFAULT_TEXTURE) -> Optional[pygame.Surface]:
         if not icon_path:
             return None
         if icon_path in self.image_cache:
