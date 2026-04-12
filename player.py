@@ -1,6 +1,8 @@
 """Player sprite and movement logic."""
 
 import pygame
+from GameItem import GameItem
+from Hotbar import Hotbar
 from config import *
 
 
@@ -9,7 +11,7 @@ class Player(pygame.sprite.Sprite):
     
     COLLISION_MARGIN = 4
 
-    def __init__(self, x, y, world_width, world_height):
+    def __init__(self, x, y, world_width, world_height, hotbar:Hotbar):
         super().__init__()
         # self.image = pygame.Surface((PLAYER_SIZE, PLAYER_SIZE))
         # self.image.fill(PLAYER_COLOR)
@@ -29,14 +31,28 @@ class Player(pygame.sprite.Sprite):
         self.invulnerable = False
         self.invulnerability_timer = 0
         self.invulnerability_duration = 50  # milliseconds
-        self.attack = 10
-        self.defense = 5
+        self.base_attack = 10
+        self.attack = self.base_attack
+        self.base_defense = 5
+        self.defense = self.base_defense
         self.speed = PLAYER_SPEED
         self.level = 1
         self.experience = 0
         self.experience_to_next_level = 100
 
         self.score = 0
+
+        self.hotbar = hotbar
+
+    def recalculate_stats(self):
+        self.attack = self.base_attack
+        self.defense = self.base_defense
+
+        for equipped in self.hotbar.items.values():
+            if equipped is None:
+                continue
+            self.attack += getattr(equipped, "attack", 0)
+            self.defense += getattr(equipped, "defense", 0)
     
     def handle_input(self, keys):
         """Handle player movement based on input."""
@@ -190,13 +206,9 @@ class Player(pygame.sprite.Sprite):
     def level_up(self):
         """Increase player level and improve stats."""
         self.level += 1
-        self.experience = 0
-        self.experience_to_next_level = int(self.experience_to_next_level * 1.5)
-        self.max_health += 20
+        self.experience_to_next_level += int(self.experience_to_next_level * 1.5)
+        self.max_health += 10
         self.health = self.max_health
-        self.attack += 5
-        self.defense += 2
-        self.speed += 0.5
 
     def draw_experience_bar(self, surface, camera):
         """Draw the player's experience bar below the health bar."""
