@@ -11,7 +11,8 @@ items = {
         "defense": 0,
         "heal": 0,
         "equip_slot": "main_hand",
-        "value": 5
+        "value": 5,
+        "rarity": "Common"
     },
     "health_potion": {
         "id": "health_potion",
@@ -24,7 +25,8 @@ items = {
         "defense": 0,
         "heal": 30,
         "equip_slot": None,
-        "value": 10
+        "value": 10,
+        "rarity": "Uncommon"
     },
     "coin": {
         "id": "coin",
@@ -37,6 +39,21 @@ items = {
         "defense": 0,
         "heal": 0,
         "equip_slot": None,
-        "value": 1
+        "value": 1,
+        "rarity": "Common"
+    },
+    "rarity_test": {
+        "id": "rarity_test",
+        "name": "Rarity Test Item",
+        "category": "Misc",
+        "description": "Item to test rarity colors",
+        "stackable": True,
+        "icon_path": "assets/textures/items/rarity_test.png",
+        "attack": 0,
+        "defense": 2,
+        "heal": 0,
+        "equip_slot": None,
+        "value": 1,
+        "rarity": "Legendary"
     }
 }

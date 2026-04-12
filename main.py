@@ -9,6 +9,7 @@ import pygame
 import pyautogui
 
 from Enemy import Enemy, generate_enemy_grid
+from Hotbar import Hotbar
 from ItemPickup import ItemPickup
 from Inventory import InventoryUI
 from background import create_background
@@ -81,7 +82,8 @@ class GameApp:
         self.tile_grid = None
         self.coins = pygame.sprite.Group()
         self.items = pygame.sprite.Group()
-        self.inventory = InventoryUI(self.window_width, self.window_height, self.scale, font_path="assets/fonts/Kenney Mini.ttf")
+        self.hotbar = Hotbar()
+        self.inventory = InventoryUI(self.window_width, self.window_height, self.hotbar, self.scale, font_path="assets/fonts/Kenney Mini.ttf")
         self.player = None
         self.camera = None
         self.lighting_system = None
@@ -133,17 +135,17 @@ class GameApp:
                 "item_data": dict(pickup.item_data),
             })
 
-        inventory_items = []
-        for item_id in self.inventory.display_order:
-            if '#' in item_id:
-                base_id = item_id.split('#')[0]
-            else:
-                base_id = item_id
+        # inventory_items = []
+        # for item_id in self.inventory.display_order:
+        #     if '#' in item_id:
+        #         base_id = item_id.split('#')[0]
+        #     else:
+        #         base_id = item_id
 
-            inventory_items.append({ "item_id": item_id,
-                                     "item_base_id": base_id,
-                                     "quantity": self.inventory.items[item_id].quantity,
-                                     "stackable": self.inventory.items[item_id].stackable,})
+        #     inventory_items.append({ "item_id": item_id,
+        #                              "item_base_id": base_id,
+        #                              "quantity": self.inventory.items[item_id].quantity,
+        #                              "stackable": self.inventory.items[item_id].stackable,})
 
         data = {
             "slot": slot,
@@ -152,6 +154,7 @@ class GameApp:
             "player_y": self.player.rect.centery,
             "coin_count": self.player.coin_count,
             "inventory_items": self.inventory.serialize_items(),
+            "hotbar": self.hotbar.get_data(),
             "remaining_items": remaining_items,
             "remaining_coins": coin_positions,
             "enemy_positions": enemy_positions,
@@ -166,8 +169,7 @@ class GameApp:
             "invulnerable": self.player.invulnerable,
             "invulnerability_timer": self.player.invulnerability_timer,
             "level_up_experience": self.player.experience_to_next_level,
-            "tile_grid": self.tile_grid,
-            "inventory_items": inventory_items,
+            "tile_grid": self.tile_grid
         }
         with open(self.save_path(slot), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -268,11 +270,13 @@ class GameApp:
         self.items = pygame.sprite.Group()
         self.enemy_grid = generate_enemy_grid(self.wall_grid, enemy_count=40)
         self.enemies = self.build_enemies_from_grid(self.enemy_grid)
-        self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height)
+        self.player = Player(self.world_width // 2, self.world_height // 2, self.world_width, self.world_height, self.hotbar)
         if add_start_knife:
             player_col = self.player.rect.centerx // TILE_SIZE
             player_row = self.player.rect.centery // TILE_SIZE
             self.items.add(ItemPickup(player_col + 1, player_row, dict(items["knife"])))
+            self.items.add(ItemPickup(player_col + 2, player_row, dict(items["knife"])))
+            self.items.add (ItemPickup(player_col, player_row + 1, dict(items["rarity_test"])))
         self.tile_grid = self.create_tile_grid(self.world_width, self.world_height, TILE_SIZE, self.wall_grid, self.coin_grid, self.enemy_grid, (self.player.rect.centerx, self.player.rect.centery))
         self.camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
         self.preview_camera = Camera(self.world_width, self.world_height, self.window_width, self.window_height)
@@ -314,6 +318,12 @@ class GameApp:
         if isinstance(inventory_items, list):
             for item_data in inventory_items:
                 self.inventory.add_item(items[item_data["item_base_id"]], quantity=item_data["quantity"])
+        
+        hotbar = slot_data.get("hotbar", {})
+        if isinstance(hotbar, dict):
+            for k, v in hotbar.items():
+                if hotbar[k] is not None:
+                    self.hotbar.add_item(self.hotbar.dict_to_GameItem(v))
 
         remaining = slot_data.get("remaining_coins")
         if isinstance(remaining, list):
@@ -492,11 +502,36 @@ class GameApp:
                 continue
 
             if self.state == GAME and self.inventory.handle_event(event):
-                continue
+                if self.inventory.clicked_item_id is not None:
+                    self.use_item(self.inventory.clicked_item_id)
 
             for button in active_buttons:
                 if button.handle_event(event):
                     break
+
+    def use_item(self, item_id:str):
+        if item_id not in self.inventory.items:
+            return
+        
+        item = self.inventory.items[item_id]
+
+        # consumable
+        if item.heal > 0:
+            self.player.health = min(self.player.max_health, self.player.health + item.heal)
+            self.inventory.remove_item(item_id, 1)
+            self.message(f"Used {item.name}")
+            return
+        
+        # equippable
+        if item.equip_slot != None:
+            old_item = self.hotbar.add_item(item)
+            self.inventory.remove_item(item_id, 1)
+            self.player.recalculate_stats()
+
+            if old_item is not None:
+                self.inventory.add_item(vars(old_item), quantity=1)
+            
+            self.message = f"Equipped {item.name}"
 
     def update_preview(self, dt):
         self.preview_time += dt
